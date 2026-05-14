@@ -1,0 +1,42 @@
+# exp_02: ResNet34 + AdamW + CE+Dice
+# name: exp02_resnet34_adamw_ce_dice
+
+experiment:
+  id: "exp02_resnet34_adamw_ce_dice"
+  description: "DeepLabV3+ ResNet34, AdamW cosine, CE+Dice compound loss"
+
+model:
+  backbone: "resnet34"
+  output_stride: 16
+  pretrained_backbone: true
+
+training:
+  epochs: 80
+  lr: 3.0e-4
+  lr_scheduler: "cosine"
+  momentum: 0.9          # unused for AdamW, kept for config consistency
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+  aux_loss: true
+  aux_weight: 0.4
+  amp: true
+  accumulation_steps: 2   # ResNet34 is lighter, can reduce accumulation
+
+loss:
+  type: "ce_dice"
+  dice_weight: 0.5
+  aux_weight: 0.4
+
+tracking:
+  mlflow:
+    enabled: true
+    tracking_uri: "outputs/mlruns"
+    experiment_name: "exp02_resnet34_adamw_ce_dice"
+  tensorboard:
+    enabled: true
+    log_dir: "outputs/tensorboard/exp02_resnet34_adamw_ce_dice"
+
+checkpoint:
+  dir: "outputs/checkpoints/exp02_resnet34_adamw_ce_dice"
+  save_top_k: 3
+  resume: null

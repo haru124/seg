@@ -1,0 +1,42 @@
+# exp_03: MobileNetV2 + Adam + Focal+Dice
+# name: exp03_mobilenetv2_adam_focal_dice
+
+experiment:
+  id: "exp03_mobilenetv2_adam_focal_dice"
+  description: "DeepLabV3+ MobileNetV2, Adam cosine, Focal+Dice for imbalance"
+
+model:
+  backbone: "mobilenet_v2"
+  output_stride: 16
+  pretrained_backbone: true
+
+training:
+  epochs: 100
+  lr: 1.0e-3
+  lr_scheduler: "cosine"
+  momentum: 0.9
+  weight_decay: 1.0e-4
+  optimizer: "adam"
+  aux_loss: true
+  aux_weight: 0.4
+  amp: true
+  accumulation_steps: 2
+
+loss:
+  type: "focal_dice"
+  gamma: 2.0
+  dice_weight: 0.5
+
+tracking:
+  mlflow:
+    enabled: true
+    tracking_uri: "outputs/mlruns"
+    experiment_name: "exp03_mobilenetv2_adam_focal_dice"
+  tensorboard:
+    enabled: true
+    log_dir: "outputs/tensorboard/exp03_mobilenetv2_adam_focal_dice"
+
+checkpoint:
+  dir: "outputs/checkpoints/exp03_mobilenetv2_adam_focal_dice"
+  save_top_k: 3
+  resume: null
