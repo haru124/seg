@@ -5,7 +5,7 @@ from PIL import Image
 from pathlib import Path
 from torchvision import transforms
 
-from src.ods.constants import CITYSCAPES_PALETTE, IGNORE_INDEX
+from src.seg.constants import CITYSCAPES_PALETTE, IGNORE_INDEX
 
 
 def load_image(image_path: str, image_size=(512, 1024)) -> torch.Tensor:

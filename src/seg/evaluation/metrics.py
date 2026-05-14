@@ -1,4 +1,4 @@
-# src/ods/evaluation/metrics.py
+# src/seg/evaluation/metrics.py
 # Based on core/utils/score.py from Tramac/awesome-semantic-segmentation-pytorch
 import numpy as np
 import torch

@@ -1,4 +1,4 @@
-# src/ods/entity/config_entity.py
+# src/seg/entity/config_entity.py
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List

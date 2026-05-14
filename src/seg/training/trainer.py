@@ -5,12 +5,12 @@ from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
 from pathlib import Path
 
-from src.ods.evaluation.metrics import SegmentationMetrics
-from src.ods.utils.checkpoint import save_checkpoint, load_checkpoint
-from src.ods.utils.common import setup_logger
-from src.ods.tracking.mlflow_logger import MLflowLogger
-from src.ods.tracking.tensorboard_logger import TensorboardLogger
-from src.ods.entity.config_entity import ExperimentConfig
+from src.seg.evaluation.metrics import SegmentationMetrics
+from src.seg.utils.checkpoint import save_checkpoint, load_checkpoint
+from src.seg.utils.common import setup_logger
+from src.seg.tracking.mlflow_logger import MLflowLogger
+from src.seg.tracking.tensorboard_logger import TensorboardLogger
+from src.seg.entity.config_entity import ExperimentConfig
 
 
 class Trainer:
