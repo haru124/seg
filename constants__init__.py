@@ -1,5 +1,5 @@
 """
-src/ods/constants/__init__.py
+src/seg/constants/__init__.py
 ------------------------------
 Central place for every project-wide constant.
 Import from here everywhere else — never hardcode strings/paths in code.
