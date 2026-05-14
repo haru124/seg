@@ -1,0 +1,64 @@
+# src/seg/datasets/dataloader.py
+from torch.utils.data import DataLoader
+from src.seg.datasets.cityscapes_dataset import CitySegmentation
+from src.seg.datasets import transforms as T
+from src.seg.entity.config_entity import DataConfig
+
+
+def get_transforms(split: str, cfg: DataConfig):
+    h, w = cfg.image_size
+    if split == "train":
+        return T.Compose([
+            T.RandomHorizontalFlip(),
+            T.RandomCrop(size=(h, w), pad_if_needed=True),
+            T.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225]),
+        ])
+    else:
+        return T.Compose([
+            T.CenterCrop(size=(h, w)),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225]),
+        ])
+
+
+def build_dataloader(cfg: DataConfig, split: str) -> DataLoader:
+    assert split in ("train", "val", "test"), f"Invalid split: {split}"
+    transform = get_transforms(split, cfg)
+
+    dataset = CitySegmentation(
+        root=cfg.root,
+        split=split,
+        transform=transform,
+    )
+
+    is_train = (split == "train")
+    loader = DataLoader(
+        dataset,
+        batch_size=cfg.batch_size,
+        shuffle=is_train,
+        num_workers=cfg.num_workers,
+        pin_memory=True,
+        drop_last=is_train,
+    )
+    if not is_train:
+        if split == "val":
+            loader = DataLoader(
+                dataset,
+                batch_size=1,  # for easier visualization
+                shuffle=False,
+                num_workers=cfg.num_workers,
+                pin_memory=True,
+            )
+        else:  # test
+            loader = DataLoader(
+                dataset,
+                batch_size=1,
+                shuffle=False,
+                num_workers=cfg.num_workers,
+                pin_memory=True,
+            )
+    return loader
