@@ -1,0 +1,100 @@
+Reference repo : https://github.com/Tramac/awesome-semantic-segmentation-pytorch
+Refer the codes I paste for segmentation -- these are the ones I currently have. Analyse, correct, and generate missing parts
+I also pasted codes previously used for object detection for initial loading, dataset, constant setups, backbone weight loading 
+I need to build a segmentation project using deeplabv3+ model on cityscapes dataset, 
+ i have zbook laptop to train with additional nvidia rtx500 - 4gb ram i guess. lets switch with resnet, resnetv1b, mobilenetv2 (- copy pasted from original repo) and experiment. - i need to use only pytorch and this repo already only uses pytorch -  - - need mlflow - need tensorboard - need onnx - need profiler(lets do profiling at last)- 
+lets keep the downloaded dataset inside seg/data- inside data it will be like -- gtFine and images -- inside this will be splits like train test and val, currently I have 297 images in test -- this was taken randomly from train -- 2495 so now train has only 2198 ig, inside each of these splits data is separated across cities -- doesnt matter. 
+I will paste all the files I currently have with structure I currently have. Analyse them, correct them, add comments to each, make them easy and clear and easy to understand, no complications. Generate content for missing codes, improvements and corrections. 
+Change the metrics.py to use mIOU, frequency weighted IoU, per class IOU, mean pixel accuracy, boundary Iou, boundary f score
+
+
+│
+├── data/ 
+|    |__images
+|    |   |_train -- subset of city folders
+|    |   |_test
+|    |   |_val
+|    |
+|    |__gtFine
+|        |_train
+|        |_test
+|        |_val
+|                 
+|___ weights    # pretrained model weights -- initial loading
+|
+├── src/ods/
+│   ├── constants/
+│   │   └── __init__.py
+│   │
+│   ├── entity/
+│   │   └── config_entity.py
+│   │
+│   ├── config/
+│   │   └── configuration.py
+│   │
+│   ├── datasets/
+│   │   ├── cityscapes_dataset.py
+│   │   └── transforms.py
+│   │   └── dataloader.py
+│   │
+│   ├── models/
+│   │   ├── backbones
+|   |   |        |-----resnet.py     (-- same as in repo)
+|   |   |        |-----resnetv1b.py    (-- same as in repo)
+|   |   |        |-----mobilenetv2.py       (-- same as in repo)
+|   |   |-----nn 
+|   |   |     |-----basic.py     (-- same as in repo)
+|   |   |     |-----jpu.py        (-- same as in repo)
+│   │   └── deeplabv3_plus.py    ---- (-- same as in repo -- ) 
+│   │
+│   ├── losses/
+│   │   └── losses.py   #empty
+│   │
+│   ├── evaluation/
+│   │   └── metrics.py
+│   │
+│   ├── training/
+│   │   └── trainer.py
+│   │_____ inference  
+|   |          |___ inference.py 
+|   |
+|   | 
+│   |____ onnx  
+|   |      |___ inference.py 
+|   |       |___ export.py
+|   |
+|   | 
+│   ├── tracking/                   # ✅ NEW (simple, clean)
+│   │   ├── mlflow_logger.py
+│   │   └── tensorboard_logger.py
+│   │
+|   |___ profiler
+|   |     |__profiler_utils.py
+|   |	   
+|   |
+│   └── utils/
+│       ├── common.py
+│       ├── checkpoint.py           # ✅ save/load models
+│       └── visualization.py        # ✅ debug + predictions
+│
+│
+├── config/
+│   ├── config.yaml
+│   └── experiments/
+│       ├── exp_01.yaml
+│       ├── exp_02.yaml
+│       └── exp_03.yaml
+│
+├── outputs/                        # ✅ ALL GENERATED STUFF
+|   |-----inference/ exp folders/ plots and visualization folders-- stored plots and         |     |                   inference images
+│   ├── checkpoints/   -- must be stored with exp name, loss, primary val metric | |       |     |                   value, epoch number
+│   ├── logs/
+│   ├── tensorboard/
+│   ├── mlruns/
+│   └── profiler/
+│ 
+│
+├── main.py
+├── template.py                     # ✅ folder generator
+├── requirements.txt
+└── Dockerfile
