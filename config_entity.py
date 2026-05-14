@@ -1,5 +1,5 @@
 """
-src/ods/entity/config_entity.py
+src/seg/entity/config_entity.py
 --------------------------------
 Typed dataclasses that hold every configuration section.
 
