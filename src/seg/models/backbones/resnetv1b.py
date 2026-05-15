@@ -1,9 +1,19 @@
+"""
+src/seg/models/backbones/resnetv1b.py
+--------------------------------------
+ResNetV1b - improved ResNet with:
+  1. Dilated convolutions in layer3/4 for larger receptive field
+  2. Optional deep stem (3 conv layers instead of 1) for better feature extraction
+  
+Perfect for semantic segmentation where we need to preserve spatial info.
+"""
+
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
 __all__ = ['ResNetV1b', 'resnet18_v1b', 'resnet34_v1b', 'resnet50_v1b',
-           'resnet101_v1b', 'resnet152_v1b', 'resnet152_v1s', 'resnet101_v1s', 'resnet50_v1s']
+           'resnet101_v1b', 'resnet152_v1b']
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -15,6 +25,7 @@ model_urls = {
 
 
 class BasicBlockV1b(nn.Module):
+    """ResNet BasicBlock with dilation support."""
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None,
@@ -32,24 +43,20 @@ class BasicBlockV1b(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
         out = self.conv2(out)
         out = self.bn2(out)
-
         if self.downsample is not None:
             identity = self.downsample(x)
-
         out += identity
         out = self.relu(out)
-
         return out
 
 
 class BottleneckV1b(nn.Module):
+    """ResNet Bottleneck with dilation support."""
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None,
@@ -68,33 +75,38 @@ class BottleneckV1b(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
-
         out = self.conv3(out)
         out = self.bn3(out)
-
         if self.downsample is not None:
             identity = self.downsample(x)
-
         out += identity
         out = self.relu(out)
-
         return out
 
 
 class ResNetV1b(nn.Module):
+    """
+    ResNetV1b backbone with optional dilated convolutions and deep stem.
+    
+    Args:
+        block       : BasicBlockV1b or BottleneckV1b
+        layers      : [blocks_in_layer1, layer2, layer3, layer4]
+        dilated     : use dilated conv in layer3/4 (stride=1, dilation>1)
+        deep_stem   : 3 conv layers in stem instead of 1 large conv
+    """
 
     def __init__(self, block, layers, num_classes=1000, dilated=True, deep_stem=False,
                  zero_init_residual=False, norm_layer=nn.BatchNorm2d):
         self.inplanes = 128 if deep_stem else 64
         super(ResNetV1b, self).__init__()
+        
+        # Stem: initial convolution layers
         if deep_stem:
             self.conv1 = nn.Sequential(
                 nn.Conv2d(3, 64, 3, 2, 1, bias=False),
@@ -107,20 +119,27 @@ class ResNetV1b(nn.Module):
             )
         else:
             self.conv1 = nn.Conv2d(3, 64, 7, 2, 3, bias=False)
+        
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(True)
         self.maxpool = nn.MaxPool2d(3, 2, 1)
+        
+        # Residual layers
         self.layer1 = self._make_layer(block, 64, layers[0], norm_layer=norm_layer)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, norm_layer=norm_layer)
+        
         if dilated:
+            # Use dilation instead of striding in layer3/4
             self.layer3 = self._make_layer(block, 256, layers[2], stride=1, dilation=2, norm_layer=norm_layer)
             self.layer4 = self._make_layer(block, 512, layers[3], stride=1, dilation=4, norm_layer=norm_layer)
         else:
             self.layer3 = self._make_layer(block, 256, layers[2], stride=2, norm_layer=norm_layer)
             self.layer4 = self._make_layer(block, 512, layers[3], stride=2, norm_layer=norm_layer)
+        
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
+        # Init weights
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -151,7 +170,8 @@ class ResNetV1b(nn.Module):
             layers.append(block(self.inplanes, planes, stride, dilation=2, downsample=downsample,
                                 previous_dilation=dilation, norm_layer=norm_layer))
         else:
-            raise RuntimeError("=> unknown dilation size: {}".format(dilation))
+            raise RuntimeError(f"Unknown dilation size: {dilation}")
+        
         self.inplanes = planes * block.expansion
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, dilation=dilation,
@@ -164,101 +184,71 @@ class ResNetV1b(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
-
         return x
 
 
 def resnet18_v1b(pretrained=False, **kwargs):
+    """ResNet-18 V1b"""
     model = ResNetV1b(BasicBlockV1b, [2, 2, 2, 2], **kwargs)
     if pretrained:
         old_dict = model_zoo.load_url(model_urls['resnet18'])
         model_dict = model.state_dict()
-        old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
+        old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
         model_dict.update(old_dict)
         model.load_state_dict(model_dict)
     return model
 
 
 def resnet34_v1b(pretrained=False, **kwargs):
+    """ResNet-34 V1b"""
     model = ResNetV1b(BasicBlockV1b, [3, 4, 6, 3], **kwargs)
     if pretrained:
         old_dict = model_zoo.load_url(model_urls['resnet34'])
         model_dict = model.state_dict()
-        old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
+        old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
         model_dict.update(old_dict)
         model.load_state_dict(model_dict)
     return model
 
 
 def resnet50_v1b(pretrained=False, **kwargs):
+    """ResNet-50 V1b"""
     model = ResNetV1b(BottleneckV1b, [3, 4, 6, 3], **kwargs)
     if pretrained:
         old_dict = model_zoo.load_url(model_urls['resnet50'])
         model_dict = model.state_dict()
-        old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
+        old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
         model_dict.update(old_dict)
         model.load_state_dict(model_dict)
     return model
 
 
 def resnet101_v1b(pretrained=False, **kwargs):
+    """ResNet-101 V1b"""
     model = ResNetV1b(BottleneckV1b, [3, 4, 23, 3], **kwargs)
     if pretrained:
         old_dict = model_zoo.load_url(model_urls['resnet101'])
         model_dict = model.state_dict()
-        old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
+        old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
         model_dict.update(old_dict)
         model.load_state_dict(model_dict)
     return model
 
 
 def resnet152_v1b(pretrained=False, **kwargs):
+    """ResNet-152 V1b"""
     model = ResNetV1b(BottleneckV1b, [3, 8, 36, 3], **kwargs)
     if pretrained:
         old_dict = model_zoo.load_url(model_urls['resnet152'])
         model_dict = model.state_dict()
-        old_dict = {k: v for k, v in old_dict.items() if (k in model_dict)}
+        old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
         model_dict.update(old_dict)
         model.load_state_dict(model_dict)
     return model
-
-
-def resnet50_v1s(pretrained=False, root='~/.torch/models', **kwargs):
-    model = ResNetV1b(BottleneckV1b, [3, 4, 6, 3], deep_stem=True, **kwargs)
-    if pretrained:
-        from ..model_store import get_resnet_file
-        model.load_state_dict(torch.load(get_resnet_file('resnet50', root=root)), strict=False)
-    return model
-
-
-def resnet101_v1s(pretrained=False, root='~/.torch/models', **kwargs):
-    model = ResNetV1b(BottleneckV1b, [3, 4, 23, 3], deep_stem=True, **kwargs)
-    if pretrained:
-        from ..model_store import get_resnet_file
-        model.load_state_dict(torch.load(get_resnet_file('resnet101', root=root)), strict=False)
-    return model
-
-
-def resnet152_v1s(pretrained=False, root='~/.torch/models', **kwargs):
-    model = ResNetV1b(BottleneckV1b, [3, 8, 36, 3], deep_stem=True, **kwargs)
-    if pretrained:
-        from ..model_store import get_resnet_file
-        model.load_state_dict(torch.load(get_resnet_file('resnet152', root=root)), strict=False)
-    return model
-
-
-if __name__ == '__main__':
-    import torch
-
-    img = torch.randn(4, 3, 224, 224)
-    model = resnet50_v1b(True)
-    output = model(img)

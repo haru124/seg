@@ -3,17 +3,17 @@ import argparse
 import torch
 import torch.optim as optim
 
-from src.ods.config.configuration import get_config
-from src.ods.constants import CONFIG_PATH
-from src.ods.utils.common import set_seed, get_device, count_parameters
-from src.ods.datasets.dataloader import build_dataloader
-from src.ods.losses.losses import build_loss
-from src.ods.training.trainer import Trainer
+from src.seg.config.configuration import get_config
+from src.seg.constants import CONFIG_PATH
+from src.seg.utils.common import set_seed, get_device, count_parameters
+from src.seg.datasets.dataloader import build_dataloader
+from src.seg.losses.losses import build_loss
+from src.seg.training.trainer import Trainer
 
 
 def build_model(cfg):
     # Import here so you can swap segmt.py contents from the reference repo
-    from src.ods.models.segmt import get_segmentation_model
+    from src.seg.models.deeplabv3_plus import get_segmentation_model
     model = get_segmentation_model(
         model="deeplabv3_plus",
         dataset="cityscapes",
@@ -77,7 +77,7 @@ def main(args):
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg, len(train_loader))
     
-    #loss_cfg = cfg_raw["loss"]   # pass raw dict from yaml
+    loss_cfg = cfg["loss"]   # pass raw dict from yaml
     loss_fn = build_loss( loss_cfg["type"], ignore_index=cfg.data.ignore_index,
             **{k: v for k, v in loss_cfg.items() if k != "type"}
                         )

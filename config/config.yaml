@@ -1,4 +1,8 @@
 # config/config.yaml
+# ====================
+# Base project configuration.
+# Experiments override specific sections with config/experiments/exp_XX.yaml
+
 project:
   name: "seg"
   seed: 42
@@ -8,36 +12,37 @@ data:
   dataset: "cityscapes"
   num_classes: 19
   ignore_index: 255
-  image_size: [512, 1024]   # H x W — safe for 4GB VRAM
+  image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
   batch_size: 4
   num_workers: 4
 
 model:
   name: "deeplabv3_plus"
-  backbone: "resnet50"       # resnet50 | resnet34 | mobilenet_v2
-  output_stride: 16          # 8 or 16; 16 is lighter on memory
+  backbone: "resnet50"          # resnet50 | resnet34 | resnet50_v1b | mobilenet_v2
+  output_stride: 16             # 8 (better) or 16 (lighter on memory)
   pretrained_backbone: true
-  pretrained_weights: null   # path to weights file or null
+  pretrained_weights: null
 
 training:
   epochs: 80
   lr: 0.007
-  lr_scheduler: "poly"       # poly | cosine | step
+  lr_scheduler: "poly"          # poly | cosine | step
   momentum: 0.9
   weight_decay: 1.0e-4
-  aux_loss: true
-  aux_weight: 0.4
-  grad_clip: null
-  amp: true                  # mixed precision — must for 4GB GPU
-  accumulation_steps: 4      # effective batch = batch_size * accumulation_steps
+  optimizer: "sgd"              # sgd | adamw | adam
+  aux_loss: true                # auxiliary decoder loss
+  aux_weight: 0.4               # weight of aux loss (paper: 0.4)
+  grad_clip: null               # max grad norm; null = no clipping
+  amp: true                     # mixed precision (FP16) — essential for 4 GB GPU
+  accumulation_steps: 4         # gradient accumulation; effective_batch = batch * steps
 
 loss:
-  type: "cross_entropy"      # cross_entropy | focal | ohem
-  class_weights: null
+  type: "ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce
+  kwargs: {}                    # loss-specific hyperparameters
 
 evaluation:
-  interval: 1                # validate every N epochs
-  metrics: ["mIoU", "pixAcc"]
+  interval: 1                   # validate every N epochs
+  metrics: ["mIoU", "fw_iou", "pixel_acc"]
 
 tracking:
   mlflow:
@@ -50,10 +55,5 @@ tracking:
 
 checkpoint:
   dir: "outputs/checkpoints"
-  save_top_k: 3             # keep top-k by val mIoU
-  resume: null              # path to checkpoint or null
-
-onnx:
-  export_dir: "outputs/onnx"
-  opset: 17
-  input_shape: [1, 3, 512, 1024]
+  save_top_k: 3                 # keep only top-k by val mIoU
+  resume: null                  # path to checkpoint or null
