@@ -119,16 +119,16 @@ def save_batch_grid(
     fig, axes = plt.subplots(n, 3, figsize=(18, 5 * n))
 
     if n == 1:
-        axes = [axes]   # keep indexing consistent
+        axes = axes.reshape(1, -1)   # ensure 2D array for indexing
 
     for row, i in enumerate(range(n)):
         img     = _denorm(images[i])
-        gt_rgb  = colorize_mask(targets[i].cpu().numpy())
-        pred_rgb= colorize_mask(preds[i].cpu().numpy())
+        gt_rgb  = colorize_mask(targets[i].cpu().numpy() if isinstance(targets[i], torch.Tensor) else targets[i])
+        pred_rgb= colorize_mask(preds[i].cpu().numpy() if isinstance(preds[i], torch.Tensor) else preds[i])
 
-        axes[row][0].imshow(img);       axes[row][0].set_title("Image")
-        axes[row][1].imshow(gt_rgb);    axes[row][1].set_title("GT")
-        axes[row][2].imshow(pred_rgb);  axes[row][2].set_title("Pred")
+        axes[row, 0].imshow(img);       axes[row, 0].set_title("Image")
+        axes[row, 1].imshow(gt_rgb);    axes[row, 1].set_title("GT Mask")
+        axes[row, 2].imshow(pred_rgb);  axes[row, 2].set_title("Prediction")
         for ax in axes[row]:
             ax.axis("off")
 
