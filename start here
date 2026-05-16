@@ -1,0 +1,20 @@
+# 1. Install & setup (2 min)
+pip install -r requirements.txt
+python template.py
+
+# 2. Download Cityscapes (follow README)
+
+# 3. Train
+python main.py --exp_config config/experiments/exp_01.yaml
+
+# 4. Monitor
+tensorboard --logdir outputs/tensorboard
+
+# 5. Evaluate (with timing + model info)
+python test_inference.py --exp_config config/experiments/exp_01.yaml
+
+# 6. Profile & optimize
+python profile_model.py --exp_config config/experiments/exp_01.yaml
+
+# 7. Deploy with ONNX (3-5x faster)
+python onnx_benchmark.py --exp_config config/experiments/exp_01.yaml
