@@ -1,189 +1,163 @@
 """
-src/seg/utils/visualization.py
---------------------------------
-Helpers for visualising segmentation predictions.
+main.py
+-------
+Main training entry point.
 
-Functions:
-    colorize_mask      — class-index mask (H,W) → RGB image (H,W,3)
-    save_prediction    — save side-by-side: input | GT | prediction
-    save_batch_grid    — save a grid of predictions for a whole batch
-    plot_class_iou     — bar chart of per-class IoU
+Usage:
+    python main.py --exp_config config/experiments/exp_01.yaml
+    python main.py --exp_config config/experiments/exp_02.yaml
 """
 
-import numpy as np
-import matplotlib
-matplotlib.use("Agg")   # headless — no display needed
-import matplotlib.pyplot as plt
-from pathlib import Path
-from PIL import Image
-
+import argparse
 import torch
+import torch.optim as optim
+from pathlib import Path
 
-from src.seg.constants import CITYSCAPES_PALETTE, CITYSCAPES_CLASSES, IMAGENET_MEAN, IMAGENET_STD
-
-
-# ── Colour mask helper ────────────────────────────────────────────────
-
-def colorize_mask(mask: np.ndarray) -> np.ndarray:
-    """
-    Convert a class-index mask to an RGB image using the Cityscapes palette.
-
-    Args:
-        mask : (H, W) int array with values 0–18 (or 255 = ignore)
-
-    Returns:
-        (H, W, 3) uint8 RGB array
-    """
-    h, w   = mask.shape
-    colour = np.zeros((h, w, 3), dtype=np.uint8)
-    for cls_id, rgb in enumerate(CITYSCAPES_PALETTE):
-        colour[mask == cls_id] = rgb
-    # Ignore pixels (255) remain black
-    return colour
+from src.ods.config.configuration import get_config
+from src.ods.constants import CONFIG_PATH
+from src.ods.utils.common import set_seed, get_device, count_parameters
+from src.ods.datasets.dataloader import build_dataloader
+from src.ods.losses.losses import build_loss
+from src.ods.training.trainer import Trainer
 
 
-# ── Denormalise for display ───────────────────────────────────────────
+def build_model(cfg):
+    """Build DeepLabV3+ model."""
+    from src.ods.models.deeplabv3_plus import get_segmentation_model
 
-def _denorm(tensor: torch.Tensor) -> np.ndarray:
-    """
-    Reverse ImageNet normalisation and convert (C,H,W) tensor → (H,W,3) uint8.
-    """
-    mean = np.array(IMAGENET_MEAN, dtype=np.float32)
-    std  = np.array(IMAGENET_STD,  dtype=np.float32)
-    img  = tensor.cpu().numpy().transpose(1, 2, 0)   # (H,W,3)
-    img  = img * std + mean
-    img  = (np.clip(img, 0, 1) * 255).astype(np.uint8)
-    return img
-
-
-# ── Save one prediction ───────────────────────────────────────────────
-
-def save_prediction(
-    image_tensor: torch.Tensor,
-    pred_mask: np.ndarray,
-    gt_mask: np.ndarray,
-    save_path: str,
-    title: str = "",
-):
-    """
-    Save a three-panel figure: input image | ground truth | prediction.
-
-    Args:
-        image_tensor : (3, H, W) normalised float tensor
-        pred_mask    : (H, W) int array — argmax of model output
-        gt_mask      : (H, W) int array — ground truth
-        save_path    : where to save the PNG
-        title        : optional figure title
-    """
-    img     = _denorm(image_tensor)
-    gt_rgb  = colorize_mask(gt_mask)
-    pred_rgb= colorize_mask(pred_mask)
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    axes[0].imshow(img);       axes[0].set_title("Input Image")
-    axes[1].imshow(gt_rgb);    axes[1].set_title("Ground Truth")
-    axes[2].imshow(pred_rgb);  axes[2].set_title("Prediction")
-
-    for ax in axes:
-        ax.axis("off")
-
-    if title:
-        fig.suptitle(title, fontsize=13)
-
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=100, bbox_inches="tight")
-    plt.close(fig)
+    model = get_segmentation_model(
+        num_classes=cfg.data.num_classes,
+        backbone=cfg.model.backbone,
+        output_stride=cfg.model.output_stride,
+        aux=cfg.training.aux_loss,
+        pretrained_base=cfg.model.pretrained_backbone,
+    )
+    return model
 
 
-# ── Save a batch grid ─────────────────────────────────────────────────
+def build_optimizer(model, cfg):
+    """Build optimizer based on config."""
+    opt_name = getattr(cfg.training, "optimizer", "sgd").lower()
 
-def save_batch_grid(
-    images: torch.Tensor,
-    preds: torch.Tensor,
-    targets: torch.Tensor,
-    save_path: str,
-    max_images: int = 4,
-):
-    """
-    Save a grid of [image | GT | pred] panels for up to max_images from a batch.
-
-    Args:
-        images   : (B, 3, H, W) normalised float tensors
-        preds    : (B, H, W)    predicted class IDs
-        targets  : (B, H, W)    GT class IDs
-        save_path: output PNG path
-        max_images: how many samples from the batch to show
-    """
-    n = min(images.shape[0], max_images)
-    fig, axes = plt.subplots(n, 3, figsize=(18, 5 * n))
-
-    if n == 1:
-        axes = axes.reshape(1, -1)   # ensure 2D array for indexing
-
-    for row, i in enumerate(range(n)):
-        img     = _denorm(images[i])
-        gt_rgb  = colorize_mask(targets[i].cpu().numpy() if isinstance(targets[i], torch.Tensor) else targets[i])
-        pred_rgb= colorize_mask(preds[i].cpu().numpy() if isinstance(preds[i], torch.Tensor) else preds[i])
-
-        axes[row, 0].imshow(img);       axes[row, 0].set_title("Image")
-        axes[row, 1].imshow(gt_rgb);    axes[row, 1].set_title("GT Mask")
-        axes[row, 2].imshow(pred_rgb);  axes[row, 2].set_title("Prediction")
-        for ax in axes[row]:
-            ax.axis("off")
-
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=90, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[Viz] Saved batch grid → {save_path}")
-
-
-# ── Per-class IoU bar chart ───────────────────────────────────────────
-
-def plot_class_iou(
-    per_class_iou: list,
-    save_path: str,
-    title: str = "Per-Class IoU",
-    class_names: list = CITYSCAPES_CLASSES,
-):
-    """
-    Save a horizontal bar chart of per-class IoU values.
-
-    Args:
-        per_class_iou : list of float (length = num_classes), NaN for absent classes
-        save_path     : output PNG path
-        title         : chart title
-        class_names   : class name labels
-    """
-    iou_arr = np.array(per_class_iou)
-    names   = class_names[:len(iou_arr)]
-
-    # Sort by IoU descending for readability
-    order  = np.argsort(iou_arr)[::-1]   # descending
-    sorted_iou   = iou_arr[order]
-    sorted_names = [names[i] for i in order]
-
-    fig, ax = plt.subplots(figsize=(9, max(5, len(names) * 0.4)))
-    colours = ["#4CAF50" if v >= 0.5 else "#FF9800" if v >= 0.3 else "#F44336"
-               for v in sorted_iou]
-    bars = ax.barh(sorted_names, sorted_iou, color=colours)
-
-    # Add value labels
-    for bar, v in zip(bars, sorted_iou):
-        label = f"{v:.3f}" if not np.isnan(v) else "N/A"
-        ax.text(
-            bar.get_width() + 0.005, bar.get_y() + bar.get_height() / 2,
-            label, va="center", fontsize=8,
+    if opt_name == "sgd":
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=cfg.training.lr,
+            momentum=cfg.training.momentum,
+            weight_decay=cfg.training.weight_decay,
         )
+    elif opt_name == "adamw":
+        return torch.optim.AdamW(
+            model.parameters(),
+            lr=cfg.training.lr,
+            weight_decay=cfg.training.weight_decay,
+        )
+    elif opt_name == "adam":
+        return torch.optim.Adam(
+            model.parameters(),
+            lr=cfg.training.lr,
+            weight_decay=cfg.training.weight_decay,
+        )
+    else:
+        raise ValueError(f"Unknown optimizer: {opt_name}")
 
-    ax.set_xlim(0, 1.05)
-    ax.set_xlabel("IoU")
-    ax.set_title(title)
-    ax.invert_yaxis()   # highest IoU at the top
 
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=100, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[Viz] Saved IoU chart → {save_path}")
+def build_scheduler(optimizer, cfg, num_iters_per_epoch: int):
+    """Build learning rate scheduler based on config."""
+    sched_name = cfg.training.lr_scheduler.lower()
+
+    if sched_name == "poly":
+        # Polynomial decay: lr = initial_lr * (1 - iter / total_iter)^0.9
+        total_iters = cfg.training.epochs * num_iters_per_epoch
+        return optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda iter: (1 - iter / total_iters) ** 0.9,
+        )
+    elif sched_name == "cosine":
+        return optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg.training.epochs
+        )
+    elif sched_name == "step":
+        return optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    else:
+        raise ValueError(f"Unknown scheduler: {sched_name}")
+
+    return None
+
+
+def main(args):
+    """Main training pipeline."""
+
+    # ── Load config ──
+    cfg = get_config(CONFIG_PATH, args.exp_config)
+
+    # ── Setup ──
+    seed = cfg.project.seed if hasattr(cfg, "project") and hasattr(cfg.project, "seed") else 42
+    set_seed(seed)
+    device = get_device()
+
+    print(f"\n{'='*70}")
+    print(f"TRAINING: {cfg.experiment_id}")
+    print(f"{'='*70}\n")
+
+    # ── Data ──
+    print("[Data] Loading train/val sets...")
+    train_loader = build_dataloader(cfg.data, split="train")
+    val_loader = build_dataloader(cfg.data, split="val")
+
+    # ── Model ──
+    print("[Model] Building DeepLabV3+...")
+    model = build_model(cfg)
+    print(f"        {count_parameters(model)}")
+
+    # ── Optimizer ──
+    print(f"[Optimizer] {cfg.training.optimizer.upper()}")
+    optimizer = build_optimizer(model, cfg)
+
+    # ── Scheduler ──
+    scheduler = build_scheduler(optimizer, cfg, len(train_loader))
+    print(f"[Scheduler] {cfg.training.lr_scheduler.upper()}")
+
+    # ── Loss ──
+    print(f"[Loss] {cfg.loss.type.upper()}")
+    loss_fn = build_loss(
+        cfg.loss.type,
+        ignore_index=cfg.data.ignore_index,
+        **cfg.loss.kwargs,
+    )
+
+    # ── Trainer ──
+    print("[Trainer] Initializing...\n")
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        loss_fn=loss_fn,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        cfg=cfg,
+        device=device,
+    )
+
+    # ── Train ──
+    trainer.train()
+
+    print(f"\n{'='*70}")
+    print("TRAINING COMPLETE")
+    print(f"{'='*70}\n")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train DeepLabV3+ on Cityscapes.")
+    parser.add_argument(
+        "--exp_config",
+        type=str,
+        default=None,
+        help="Path to experiment config yaml (e.g., config/experiments/exp_01.yaml)",
+    )
+    args = parser.parse_args()
+
+    if args.exp_config is None:
+        raise ValueError("--exp_config is required. Example: config/experiments/exp_01.yaml")
+
+    main(args)
