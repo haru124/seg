@@ -133,7 +133,7 @@ class Trainer:
             targets = targets.to(self.device, non_blocking=True).long()
 
             # Forward pass under AMP context
-            with autocast(enabled=self.cfg.training.amp):
+            with autocast(device_type= self.device.type, enabled=self.cfg.training.amp):
                 outputs = self.model(images)
                 # Divide by accum so gradients average correctly
                 loss = self.loss_fn(outputs, targets) / accum
@@ -179,7 +179,7 @@ class Trainer:
             images  = images.to(self.device, non_blocking=True)
             targets = targets.to(self.device, non_blocking=True).long()
 
-            with autocast(enabled=self.cfg.training.amp):
+            with autocast(device_type = self.device.type, enabled=self.cfg.training.amp):
                 outputs = self.model(images)
                 loss    = self.loss_fn(outputs, targets)
 

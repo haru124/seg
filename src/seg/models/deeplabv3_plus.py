@@ -272,7 +272,7 @@ def _build_backbone(name, output_stride, pretrained, norm_layer,
         if backbone_weights_path and Path(backbone_weights_path).exists():
             print(f"[Backbone] Loading weights from {backbone_weights_path}")
             state_dict = torch.load(backbone_weights_path,
-                                    map_location="cpu", weights_only=True)
+                                    map_location="cpu", weights_only=False)
             # state_dict may be wrapped — torchvision saves bare state_dicts
             if "state_dict" in state_dict:
                 state_dict = state_dict["state_dict"]

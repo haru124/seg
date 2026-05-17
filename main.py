@@ -121,11 +121,13 @@ def main(args):
 
     # ── Loss ──
     print(f"[Loss] {cfg.loss.type.upper()}")
+    
+    loss_kwargs = cfg.loss.kwargs if cfg.loss.kwargs else {}
     loss_fn = build_loss(
-        cfg.loss.type,
-        ignore_index=cfg.data.ignore_index,
-        **cfg.loss.kwargs,
-    )
+    cfg.loss.type,
+    ignore_index=cfg.data.ignore_index,
+    **loss_kwargs,
+)
 
     # ── Trainer ──
     print("[Trainer] Initializing...\n")
