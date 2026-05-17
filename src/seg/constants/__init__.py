@@ -11,8 +11,8 @@ Usage:
 from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────
-# Root of the project (two levels up from this file: constants/ → ods/ → src/ → seg/)
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+# Root of the project (two levels up from this file: constants/ → seg/ → src/ → seg/)
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 CONFIG_PATH       = PROJECT_ROOT / "config" / "config.yaml"
 EXPERIMENTS_DIR   = PROJECT_ROOT / "config" / "experiments"

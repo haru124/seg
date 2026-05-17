@@ -7,7 +7,7 @@ model:
   backbone: "resnet34"
   output_stride: 16
   pretrained_backbone: false
-  backbone_weights_path: null
+  backbone_weights_path: "weights/resnet50.pth"
 
 data:
   root: "data"

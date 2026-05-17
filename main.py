@@ -31,7 +31,7 @@ def build_model(cfg):
         output_stride=cfg.model.output_stride,
         aux=cfg.training.aux_loss,
         pretrained_base=cfg.model.pretrained_backbone,
-        backbone_weights_path=cfg.model.get('backbone_weights_path'),  # ✅ ADD
+        backbone_weights_path=cfg.model.backbone_weights_path,
     )
     return model
 
@@ -154,11 +154,11 @@ if __name__ == "__main__":
         "--exp_config",
         type=str,
         default=None,
-        help="Path to experiment config yaml (e.g., config/experiments/exp_01.yaml)",
+        help="Path to experiment config yaml (e.g., config/experiments/exp1.yaml)",
     )
     args = parser.parse_args()
 
     if args.exp_config is None:
-        raise ValueError("--exp_config is required. Example: config/experiments/exp_01.yaml")
+        raise ValueError("--exp_config is required. Example: config/experiments/exp1.yaml")
 
     main(args)

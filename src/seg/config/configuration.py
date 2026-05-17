@@ -32,6 +32,7 @@ from src.seg.entity.config_entity import (
 
 def _load_yaml(path: str | Path) -> dict:
     """Load a YAML file and return as a plain Python dict."""
+    #print(f"Loading YAML config from {path}...")
     with open(path, "r") as f:
         return yaml.safe_load(f) or {}
 
@@ -49,13 +50,14 @@ def _deep_merge(base: dict, override: dict) -> dict:
             result[key] = _deep_merge(result[key], val)
         else:
             result[key] = val
+    #print(f"Deep merged config with override. Example key 'training.lr': {result.get('training', {}).get('lr')}")
     return result
 
 
 # ── Public entry point ────────────────────────────────────────────────
 
 def get_config(
-    base_config_path: str | Path,
+    base_config_path: str | Path = "config/config.yaml",
     exp_config_path: Optional[str | Path] = None,
 ) -> ExperimentConfig:
     """
@@ -69,10 +71,12 @@ def get_config(
     Returns:
         ExperimentConfig — pass this object around everywhere.
     """
+    #print(f"Loading base config from {base_config_path}...")
     cfg = _load_yaml(base_config_path)
 
     if exp_config_path is not None:
         exp_cfg = _load_yaml(exp_config_path)
+        #print(f"Experiment override config loaded from {exp_config_path} printing 1 example key: {exp_cfg.get('training', {}).get('lr')}")
         cfg = _deep_merge(cfg, exp_cfg)
 
     return _build_config(cfg)

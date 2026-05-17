@@ -2,8 +2,7 @@
 # Cityscapes DeepLabV3+ semantic segmentation project
 
 # Core ML framework
-torch>=1.12.0
-torchvision>=0.13.0
+
 numpy>=1.21.0
 
 # Configuration & utilities
@@ -25,3 +24,6 @@ matplotlib>=3.3.0
 # Development (optional)
 black>=21.0
 flake8>=3.9.0
+
+#for ONNX export and inference (optional)
+onnxruntime>=1.10.0

@@ -1,8 +1,7 @@
 """
-src/ods/models/nn/basic.py
+src/seg/models/nn/basic.py
 ---------------------------
 Helper modules used across the segmentation models.
-Includes common patterns: Conv+BN+ReLU, Depthwise, Inverted Residual, etc.
 """
 
 import torch
@@ -16,74 +15,71 @@ __all__ = [
 
 
 class _ConvBNReLU(nn.Module):
-    """Standard Conv + BatchNorm + ReLU (or ReLU6)"""
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
-                 dilation=1, groups=1, relu6=False, norm_layer=nn.BatchNorm2d, **kwargs):
-        super(_ConvBNReLU, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding,
-                              dilation, groups, bias=False)
-        self.bn = norm_layer(out_channels)
+    """Conv + BatchNorm + ReLU"""
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding=0, dilation=1, groups=1,
+                 relu6=False, norm_layer=nn.BatchNorm2d, **kwargs):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size,
+                              stride=stride, padding=padding,
+                              dilation=dilation, groups=groups, bias=False)
+        self.bn   = norm_layer(out_channels)
         self.relu = nn.ReLU6(inplace=True) if relu6 else nn.ReLU(inplace=True)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        return x
+        return self.relu(self.bn(self.conv(x)))
 
 
 class _ConvBNPReLU(nn.Module):
     """Conv + BatchNorm + PReLU"""
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
-                 dilation=1, groups=1, norm_layer=nn.BatchNorm2d, **kwargs):
-        super(_ConvBNPReLU, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding,
-                              dilation, groups, bias=False)
-        self.bn = norm_layer(out_channels)
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding=0, dilation=1, groups=1,
+                 norm_layer=nn.BatchNorm2d, **kwargs):
+        super().__init__()
+        self.conv  = nn.Conv2d(in_channels, out_channels, kernel_size,
+                               stride=stride, padding=padding,
+                               dilation=dilation, groups=groups, bias=False)
+        self.bn    = norm_layer(out_channels)
         self.prelu = nn.PReLU(out_channels)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.prelu(x)
-        return x
+        return self.prelu(self.bn(self.conv(x)))
 
 
 class _ConvBN(nn.Module):
     """Conv + BatchNorm (no activation)"""
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
-                 dilation=1, groups=1, norm_layer=nn.BatchNorm2d, **kwargs):
-        super(_ConvBN, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding,
-                              dilation, groups, bias=False)
-        self.bn = norm_layer(out_channels)
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding=0, dilation=1, groups=1,
+                 norm_layer=nn.BatchNorm2d, **kwargs):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size,
+                              stride=stride, padding=padding,
+                              dilation=dilation, groups=groups, bias=False)
+        self.bn   = norm_layer(out_channels)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        return x
+        return self.bn(self.conv(x))
 
 
 class _BNPReLU(nn.Module):
-    """BatchNorm + PReLU (no conv)"""
+    """BatchNorm + PReLU"""
     def __init__(self, out_channels, norm_layer=nn.BatchNorm2d, **kwargs):
-        super(_BNPReLU, self).__init__()
-        self.bn = norm_layer(out_channels)
+        super().__init__()
+        self.bn    = norm_layer(out_channels)
         self.prelu = nn.PReLU(out_channels)
 
     def forward(self, x):
-        x = self.bn(x)
-        x = self.prelu(x)
-        return x
+        return self.prelu(self.bn(x))
 
 
 class _DepthwiseConv(nn.Module):
-    """Depthwise separable convolution (for MobileNet)"""
-    def __init__(self, in_channels, out_channels, stride, norm_layer=nn.BatchNorm2d, **kwargs):
-        super(_DepthwiseConv, self).__init__()
+    """Depthwise separable convolution"""
+    def __init__(self, in_channels, out_channels, stride,
+                 norm_layer=nn.BatchNorm2d, **kwargs):
+        super().__init__()
         self.conv = nn.Sequential(
-            _ConvBNReLU(in_channels, in_channels, 3, stride, 1,
-                        groups=in_channels, norm_layer=norm_layer),
+            _ConvBNReLU(in_channels, in_channels, 3, stride=stride,
+                        padding=1, groups=in_channels, norm_layer=norm_layer),
             _ConvBNReLU(in_channels, out_channels, 1, norm_layer=norm_layer),
         )
 
@@ -92,27 +88,22 @@ class _DepthwiseConv(nn.Module):
 
 
 class InvertedResidual(nn.Module):
-    """Inverted residual block (MobileNetV2)"""
+    """Inverted residual block (MobileNetV2 style)"""
     def __init__(self, in_channels, out_channels, stride, expand_ratio,
                  norm_layer=nn.BatchNorm2d, **kwargs):
-        super(InvertedResidual, self).__init__()
+        super().__init__()
         assert stride in [1, 2]
-        self.use_res_connect = stride == 1 and in_channels == out_channels
+        self.use_res_connect = (stride == 1 and in_channels == out_channels)
+        hidden = int(round(in_channels * expand_ratio))
 
-        hidden_channels = int(round(in_channels * expand_ratio))
         layers = []
-        
         if expand_ratio != 1:
-            # Expand
-            layers.append(_ConvBNReLU(in_channels, hidden_channels, 1, relu6=True,
-                                     norm_layer=norm_layer))
-        
-        # Depthwise
+            layers.append(_ConvBNReLU(in_channels, hidden, 1,
+                                      relu6=True, norm_layer=norm_layer))
         layers.extend([
-            _ConvBNReLU(hidden_channels, hidden_channels, 3, stride, 1,
-                       groups=hidden_channels, relu6=True, norm_layer=norm_layer),
-            # Project (no activation)
-            nn.Conv2d(hidden_channels, out_channels, 1, bias=False),
+            _ConvBNReLU(hidden, hidden, 3, stride=stride, padding=1,
+                        groups=hidden, relu6=True, norm_layer=norm_layer),
+            nn.Conv2d(hidden, out_channels, 1, bias=False),
             norm_layer(out_channels),
         ])
         self.conv = nn.Sequential(*layers)
@@ -120,25 +111,23 @@ class InvertedResidual(nn.Module):
     def forward(self, x):
         if self.use_res_connect:
             return x + self.conv(x)
-        else:
-            return self.conv(x)
+        return self.conv(x)
 
 
 class _PSPModule(nn.Module):
-    """Pyramid Scene Parsing Module (for PSPNet)"""
+    """Pyramid Scene Parsing Module"""
     def __init__(self, in_channels, sizes=(1, 2, 3, 6), **kwargs):
-        super(_PSPModule, self).__init__()
-        out_channels = int(in_channels / 4)
-        self.avgpools = nn.ModuleList()
-        self.convs = nn.ModuleList()
-        for size in sizes:
-            self.avgpools.append(nn.AdaptiveAvgPool2d(size))
-            self.convs.append(_ConvBNReLU(in_channels, out_channels, 1, **kwargs))
+        super().__init__()
+        out_channels = in_channels // 4
+        self.avgpools = nn.ModuleList([nn.AdaptiveAvgPool2d(s) for s in sizes])
+        self.convs    = nn.ModuleList([
+            _ConvBNReLU(in_channels, out_channels, 1, **kwargs) for _ in sizes
+        ])
 
     def forward(self, x):
-        size = x.size()[2:]
+        size  = x.shape[-2:]
         feats = [x]
-        for avgpool, conv in zip(self.avgpools, self.convs):
-            feats.append(F.interpolate(conv(avgpool(x)), size, mode='bilinear',
-                                      align_corners=True))
+        for pool, conv in zip(self.avgpools, self.convs):
+            feats.append(F.interpolate(conv(pool(x)), size,
+                                       mode='bilinear', align_corners=True))
         return torch.cat(feats, dim=1)

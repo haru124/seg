@@ -1,3 +1,4 @@
+'''
 """
 src/seg/models/backbones/mobilenetv2.py
 ----------------------------------------
@@ -143,4 +144,29 @@ def get_mobilenet_v2(pretrained=False, **kwargs):
     model = MobileNetV2(**kwargs)
     if pretrained:
         print("[MobileNetV2] Pretrained weights not available in this implementation.")
+    return model
+'''
+
+
+"""
+src/seg/models/backbones/mobilenetv2.py
+----------------------------------------
+Thin wrapper around torchvision MobileNetV2.
+Note: AdaptiveAvgPool2d is NOT inside self.features — kept only for
+      classification forward, so backbone slicing works correctly.
+"""
+
+from torchvision.models import MobileNetV2
+from torchvision.models import mobilenet_v2 as _tv_mobilenet_v2
+
+__all__ = ['MobileNetV2', 'get_mobilenet_v2']
+
+
+def get_mobilenet_v2(pretrained=False, **kwargs):
+    """
+    Returns a torchvision MobileNetV2 (no pretrained weights loaded here).
+    kwargs are ignored — torchvision MobileNetV2 doesn't accept norm_layer
+    in older versions, so we drop extra kwargs safely.
+    """
+    model = _tv_mobilenet_v2(weights=None)
     return model
