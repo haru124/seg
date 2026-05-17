@@ -130,19 +130,19 @@ class MobileNetV2(nn.Module):
         return x
 
 
-def get_mobilenet_v2(pretrained=False, **kwargs):
+def get_mobilenet_v2(use_pretrained_backbone=True, **kwargs):
     """
     Build MobileNetV2 backbone.
     
     Args:
-        pretrained : (not supported in this implementation)
+        C : (not supported in this implementation)
         **kwargs   : passed to MobileNetV2 constructor
     
     Returns:
         MobileNetV2 instance
     """
     model = MobileNetV2(**kwargs)
-    if pretrained:
+    if use_pretrained_backbone:
         print("[MobileNetV2] Pretrained weights not available in this implementation.")
     return model
 '''
@@ -162,7 +162,7 @@ from torchvision.models import mobilenet_v2 as _tv_mobilenet_v2
 __all__ = ['MobileNetV2', 'get_mobilenet_v2']
 
 
-def get_mobilenet_v2(pretrained=False, **kwargs):
+def get_mobilenet_v2(use_pretrained_weights=False, **kwargs):
     """
     Returns a torchvision MobileNetV2 (no pretrained weights loaded here).
     kwargs are ignored — torchvision MobileNetV2 doesn't accept norm_layer

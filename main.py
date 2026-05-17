@@ -30,7 +30,7 @@ def build_model(cfg):
         backbone=cfg.model.backbone,
         output_stride=cfg.model.output_stride,
         aux=cfg.training.aux_loss,
-        pretrained_base=cfg.model.pretrained_backbone,
+        use_pretrained_backbone=cfg.model.use_pretrained_backbone,
         backbone_weights_path=cfg.model.backbone_weights_path,
     )
     return model

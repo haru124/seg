@@ -149,33 +149,33 @@ class ResNet(nn.Module):
         return self.fc(x)
 
 
-def resnet18(pretrained=False, **kwargs):
+def resnet18(use_pretrained_weights=False, **kwargs):
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
     return model
 
-def resnet34(pretrained=False, **kwargs):
+def resnet34(use_pretrained_weights=False, **kwargs):
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet34']))
     return model
 
-def resnet50(pretrained=False, **kwargs):
+def resnet50(use_pretrained_weights=False, **kwargs):
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
     return model
 
-def resnet101(pretrained=False, **kwargs):
+def resnet101(use_pretrained_weights=False, **kwargs):
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
     return model
 
-def resnet152(pretrained=False, **kwargs):
+def resnet152(use_pretrained_weights=False, **kwargs):
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
 
 

@@ -386,7 +386,7 @@ def main(args):
         backbone=cfg.model.backbone,
         output_stride=cfg.model.output_stride,
         aux=False,  # No aux head for inference
-        pretrained_base=False,
+        use_pretrained_backbone=False,
         backbone_weights_path=None,
     )
     

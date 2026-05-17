@@ -423,19 +423,59 @@ def _build_backbone(name, output_stride, use_pretrained_backbone, norm_layer,
         from torchvision.models import mobilenet_v2 as tv_mv2
 
         base = tv_mv2(weights=None)
+        
+        if use_pretrained_backbone:
 
-        if backbone_weights_path and Path(backbone_weights_path).exists():
-            print(f"[Backbone] Loading weights from {backbone_weights_path}")
-            state_dict = torch.load(backbone_weights_path,
-                                    map_location="cpu", weights_only=False)
-            if "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-            base.load_state_dict(state_dict, strict=False)
-        elif pretrained:
-            url = "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth"
-            print("[Backbone] Downloading MobileNetV2 pretrained weights")
-            base.load_state_dict(model_zoo.load_url(url))
+            # ---------------------------------------------------------
+            # Case 1: local pretrained weights
+            # ---------------------------------------------------------
+            if (
+                backbone_weights_path is not None
+                and Path(backbone_weights_path).exists()
+            ):
 
+                print(f"[Backbone] Loading local weights: {backbone_weights_path}")
+
+                state_dict = torch.load(
+                    backbone_weights_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+
+                # checkpoint wrapper support
+                if "state_dict" in state_dict:
+                    state_dict = state_dict["state_dict"]
+
+                missing, unexpected = base.load_state_dict(
+                    state_dict,
+                    strict=False,
+                )
+
+                if missing:
+                    print(f"[Backbone] Missing keys ({len(missing)}): {missing[:3]} ...")
+
+                if unexpected:
+                    print(f"[Backbone] Unexpected keys ({len(unexpected)}): {unexpected[:3]} ...")
+
+            # ---------------------------------------------------------
+            # Case 2: download torchvision pretrained weights
+            # ---------------------------------------------------------
+            else:
+                from src.seg.models.backbones.resnet import model_urls
+
+                print(f"[Backbone] Downloading torchvision pretrained {name}")
+
+                state_dict = model_zoo.load_url(model_urls[name])
+
+                base.load_state_dict(state_dict)
+
+        # -------------------------------------------------------------
+        # Case 3: random initialization
+        # -------------------------------------------------------------
+        else:
+            print("[Backbone] Training backbone from scratch")
+
+        
         backbone = _MobileNetV2Backbone(base)
         return backbone, 24, 96, 1280
 
@@ -454,7 +494,7 @@ def get_segmentation_model(
     backbone: str = "resnet50",
     output_stride: int = 16,
     aux: bool = True,
-    pretrained_base: bool = True,
+    use_pretrained_backbone: bool = True,
     norm_layer=nn.BatchNorm2d,
     use_jpu: bool = False,
     backbone_weights_path: str = None,
@@ -464,7 +504,7 @@ def get_segmentation_model(
         backbone_name         = backbone,
         output_stride         = output_stride,
         aux                   = aux,
-        pretrained_base       = pretrained_base,
+        use_pretrained_backbone       = use_pretrained_backbone,
         norm_layer            = norm_layer,
         use_jpu               = use_jpu,
         backbone_weights_path = backbone_weights_path,

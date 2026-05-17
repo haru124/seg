@@ -194,10 +194,10 @@ class ResNetV1b(nn.Module):
         return x
 
 
-def resnet18_v1b(pretrained=False, **kwargs):
+def resnet18_v1b(use_pretrained_weights=True, **kwargs):
     """ResNet-18 V1b"""
     model = ResNetV1b(BasicBlockV1b, [2, 2, 2, 2], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         old_dict = model_zoo.load_url(model_urls['resnet18'])
         model_dict = model.state_dict()
         old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
@@ -206,10 +206,10 @@ def resnet18_v1b(pretrained=False, **kwargs):
     return model
 
 
-def resnet34_v1b(pretrained=False, **kwargs):
+def resnet34_v1b(use_pretrained_weights=True, **kwargs):
     """ResNet-34 V1b"""
     model = ResNetV1b(BasicBlockV1b, [3, 4, 6, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         old_dict = model_zoo.load_url(model_urls['resnet34'])
         model_dict = model.state_dict()
         old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
@@ -218,10 +218,10 @@ def resnet34_v1b(pretrained=False, **kwargs):
     return model
 
 
-def resnet50_v1b(pretrained=False, **kwargs):
+def resnet50_v1b(use_pretrained_weights=False, **kwargs):
     """ResNet-50 V1b"""
     model = ResNetV1b(BottleneckV1b, [3, 4, 6, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         old_dict = model_zoo.load_url(model_urls['resnet50'])
         model_dict = model.state_dict()
         old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
@@ -230,10 +230,10 @@ def resnet50_v1b(pretrained=False, **kwargs):
     return model
 
 
-def resnet101_v1b(pretrained=False, **kwargs):
+def resnet101_v1b(use_pretrained_weights=False, **kwargs):
     """ResNet-101 V1b"""
     model = ResNetV1b(BottleneckV1b, [3, 4, 23, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         old_dict = model_zoo.load_url(model_urls['resnet101'])
         model_dict = model.state_dict()
         old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
@@ -242,10 +242,10 @@ def resnet101_v1b(pretrained=False, **kwargs):
     return model
 
 
-def resnet152_v1b(pretrained=False, **kwargs):
+def resnet152_v1b(use_pretrained_weights=False, **kwargs):
     """ResNet-152 V1b"""
     model = ResNetV1b(BottleneckV1b, [3, 8, 36, 3], **kwargs)
-    if pretrained:
+    if use_pretrained_weights:
         old_dict = model_zoo.load_url(model_urls['resnet152'])
         model_dict = model.state_dict()
         old_dict = {k: v for k, v in old_dict.items() if k in model_dict}
