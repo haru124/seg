@@ -4,7 +4,7 @@
 # Experiments override specific sections with config/experiments/exp_XX.yaml
 
 project:
-  name: "seg"
+  name: "seg_deeplabv3_plus"
   seed: 42
 
 data:
@@ -21,8 +21,7 @@ model:
   name: "deeplabv3_plus"
   backbone: "resnet50"          # resnet50 | resnet34 | resnet50_v1b | mobilenet_v2
   output_stride: 16             # 8 (better) or 16 (lighter on memory)
-  pretrained_backbone: true
-  pretrained_weights: null
+  use_pretrained_backbone: true
   backbone_weights_path: null  #  path to manually downloaded weights
   use_jpu: false              # use Joint Pyramid Upsampling module (adds memory overhead)
 

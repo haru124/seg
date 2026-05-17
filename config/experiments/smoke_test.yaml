@@ -2,8 +2,8 @@ experiment_id: "smoke_test"
 
 model:
   backbone: "resnet50"
-  output_stride: 16
-  pretrained_backbone: false
+  output_stride: 8  #=8 -> layer 3 (dilation = 2, stride = 1, H/8) and layer 4 (dilation = 4, stride = 1, H/8)  if output_stride =16, only layer 4 dilation=2, H/
+  use_pretrained_backbone: false
   backbone_weights_path: "weights/resnet50.pth"
 
 data:

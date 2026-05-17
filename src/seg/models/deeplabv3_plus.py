@@ -6,6 +6,15 @@ DeepLabV3+ for semantic segmentation.
 Backbones supported:
     resnet18 / resnet34 / resnet50 / resnet101  (via torchvision)
     mobilenet_v2                                (via torchvision)
+
+output_stride controls backbone dilation:
+    output_stride=32 : no dilation  (standard ResNet, fastest, lowest memory)
+    output_stride=16 : layer4 dilated  (default, good balance)
+    output_stride=8  : layer3+4 dilated  (best quality, most memory)
+
+Architecture (original DeepLabV3+):
+    backbone (with dilation) → C1 (stride 4) + C4 (stride 8 or 16)
+    → ASPP → Decoder (upsample + concat C1 + refine) → output
 """
 
 import torch
@@ -96,7 +105,8 @@ class _DeepLabHead(nn.Module):
     def forward(self, aspp_feat, c1_feat):
         size = c1_feat.shape[-2:]
         c1   = self.c1_reduce(c1_feat)
-        x    = F.interpolate(aspp_feat, size=size, mode="bilinear", align_corners=False)
+        x    = F.interpolate(aspp_feat, size=size,
+                             mode="bilinear", align_corners=False)
         return self.refine(torch.cat([x, c1], dim=1))
 
 
@@ -118,50 +128,107 @@ class _AuxHead(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Dilation helper — applied AFTER loading pretrained weights
+# ══════════════════════════════════════════════════════════════════════
+
+def _apply_dilation_to_layer(layer, stride, dilation):
+    """
+    Patch a ResNet layer IN-PLACE to use dilation instead of striding.
+
+    This is applied AFTER loading pretrained weights so the weights
+    themselves don't change — only the stride/dilation/padding changes.
+    The 3x3 conv in each block gets dilation applied; the 1x1 convs
+    and downsample are unaffected (they don't have spatial extent).
+
+    Args:
+        layer   : resnet.layer3 or resnet.layer4
+        stride  : new stride for the first block (1 = no downsampling)
+        dilation: dilation rate for all 3x3 convs in this layer
+    """
+    for i, block in enumerate(layer):
+        # Fix the downsampling shortcut in the FIRST block only
+        if i == 0 and block.downsample is not None:
+            # Change stride in the 1x1 downsample conv
+            block.downsample[0].stride = (stride, stride)
+
+        # Fix every conv in the block
+        for m in block.modules():
+            if isinstance(m, nn.Conv2d):
+                if m.kernel_size == (3, 3):
+                    # This is the spatial conv — apply dilation
+                    if i == 0:
+                        m.stride  = (stride, stride)
+                    m.dilation = (dilation, dilation)
+                    m.padding  = (dilation, dilation)  # padding = dilation to preserve size
+
+
+# ══════════════════════════════════════════════════════════════════════
 # DeepLabV3+
 # ══════════════════════════════════════════════════════════════════════
 
 class DeepLabV3Plus(nn.Module):
+    """
+    DeepLabV3+ with pretrained ResNet backbone and optional dilation.
+
+    output_stride controls the effective stride of the backbone output:
+        32 → no dilation (fastest, but coarse features)
+        16 → layer4 dilated with rate=2  (default, recommended)
+        8  → layer3 dilated rate=2, layer4 dilated rate=4  (best, more memory)
+
+    use_jpu: replace ASPP input with JPU-fused features (FastFCN style)
+             mutually exclusive with the standard dilated backbone path
+             but can be combined if needed
+    """
     def __init__(
         self,
         num_classes: int,
         backbone_name: str = "resnet50",
         output_stride: int = 16,
         aux: bool = True,
-        pretrained_base: bool = True,
+        use_pretrained_backbone: bool = True,
         norm_layer=nn.BatchNorm2d,
         use_jpu: bool = False,
         backbone_weights_path: str = None,
     ):
         super().__init__()
-        self.aux     = aux
-        self.use_jpu = use_jpu
+        self.aux      = aux
+        self.use_jpu  = use_jpu
 
         self.backbone, c1_ch, c3_ch, c4_ch = _build_backbone(
             backbone_name, output_stride,
-            pretrained_base, norm_layer, backbone_weights_path,
+            use_pretrained_backbone, norm_layer, backbone_weights_path,
         )
 
+        # JPU fuses c1+c3+c4 into a richer feature map before ASPP
         if use_jpu:
             self.jpu = JPU(
                 in_channels=[c1_ch, c3_ch, c4_ch],
                 width=512,
                 norm_layer=norm_layer,
             )
-            aspp_in = 512 * 4
+            aspp_in = 512 * 4   # JPU outputs 4 dilated branches of 512ch each
         else:
-            aspp_in = c4_ch
+            aspp_in = c4_ch     # standard path: ASPP takes C4 directly
 
-        aspp_rates = (6, 12, 18) if output_stride == 16 else (12, 24, 36)
-        self.aspp = ASPP(aspp_in, aspp_rates, out_channels=256, norm_layer=norm_layer)
+        # ASPP rates depend on output_stride
+        # output_stride=8  → rates (12, 24, 36) — larger rates for larger receptive field
+        # output_stride=16 → rates (6, 12, 18)
+        # output_stride=32 → rates (6, 12, 18)  — no backbone dilation, ASPP does the work
+        if output_stride == 8:
+            aspp_rates = (12, 24, 36)
+        else:
+            aspp_rates = (6, 12, 18)
+
+        self.aspp = ASPP(aspp_in, aspp_rates, out_channels=256,
+                         norm_layer=norm_layer)
         self.head = _DeepLabHead(num_classes, c1_ch, norm_layer)
 
         if aux:
             self.aux_head = _AuxHead(c3_ch, num_classes, norm_layer)
 
     def forward(self, x):
-        input_size = x.shape[-2:]
-        c1, c3, c4 = self.backbone(x)
+        input_size   = x.shape[-2:]
+        c1, c3, c4   = self.backbone(x)
 
         if self.use_jpu:
             c1, c3, c4, jpu_out = self.jpu(c1, c3, c4)
@@ -170,7 +237,8 @@ class DeepLabV3Plus(nn.Module):
             aspp_out = self.aspp(c4)
 
         out = self.head(aspp_out, c1)
-        out = F.interpolate(out, size=input_size, mode="bilinear", align_corners=False)
+        out = F.interpolate(out, size=input_size,
+                            mode="bilinear", align_corners=False)
         result = {"out": out}
 
         if self.aux and self.training:
@@ -188,12 +256,14 @@ class DeepLabV3Plus(nn.Module):
 
 class _ResNetBackbone(nn.Module):
     """
-    Wraps a torchvision ResNet to expose (c1, c3, c4).
-    torchvision ResNet has: conv1, bn1, relu, maxpool, layer1-4, avgpool, fc
+    Wraps torchvision ResNet to expose (c1, c3, c4) feature maps.
+
+    C1 = layer1 output  (stride 4)   — low-level, used in decoder
+    C3 = layer3 output  (stride 8 or 16 depending on dilation)
+    C4 = layer4 output  (stride 8, 16, or 32 depending on dilation)
     """
     def __init__(self, resnet):
         super().__init__()
-        # torchvision uses 'relu' not 'relu1'
         self.stem   = nn.Sequential(resnet.conv1, resnet.bn1,
                                     resnet.relu,  resnet.maxpool)
         self.layer1 = resnet.layer1
@@ -212,27 +282,16 @@ class _ResNetBackbone(nn.Module):
 
 class _MobileNetV2Backbone(nn.Module):
     """
-    Wraps torchvision MobileNetV2 features to expose (c1, c3, c4).
-
-    torchvision MobileNetV2.features layout:
-      [0]      ConvBNReLU  stride=2  32ch
-      [1]      IR t=1      stride=1  16ch
-      [2-3]    IR t=6      stride=2  24ch   ← c1 (stride 4)
-      [4-6]    IR t=6      stride=2  32ch
-      [7-10]   IR t=6      stride=2  64ch
-      [11-13]  IR t=6      stride=1  96ch   ← c3 (stride 16)
-      [14-16]  IR t=6      stride=2  160ch
-      [17]     IR t=6      stride=1  320ch
-      [18]     ConvBNReLU  1x1       1280ch ← c4
-    Note: NO AdaptiveAvgPool in features (that's in classifier only)
+    Wraps torchvision MobileNetV2 to expose (c1, c3, c4).
+    No dilation support (MobileNetV2 is used as-is).
     """
     def __init__(self, mobilenet):
         super().__init__()
-        f = mobilenet.features          # nn.Sequential of 19 modules [0..18]
-        self.stage1 = nn.Sequential(*f[:4])    # → stride 4,  24ch
-        self.stage2 = nn.Sequential(*f[4:7])   # → stride 8,  32ch
-        self.stage3 = nn.Sequential(*f[7:14])  # → stride 16, 96ch
-        self.stage4 = nn.Sequential(*f[14:])   # → stride 32, 1280ch
+        f = mobilenet.features
+        self.stage1 = nn.Sequential(*f[:4])    # stride 4,  24ch  → c1
+        self.stage2 = nn.Sequential(*f[4:7])   # stride 8,  32ch
+        self.stage3 = nn.Sequential(*f[7:14])  # stride 16, 96ch  → c3
+        self.stage4 = nn.Sequential(*f[14:])   # stride 32, 1280ch → c4
 
     def forward(self, x):
         c1 = self.stage1(x)
@@ -249,13 +308,12 @@ class _MobileNetV2Backbone(nn.Module):
 import torch.utils.model_zoo as model_zoo
 
 
-def _build_backbone(name, output_stride, pretrained, norm_layer,
+def _build_backbone(name, output_stride, use_pretrained_backbone, norm_layer,
                     backbone_weights_path=None):
 
     # ── ResNet family ──────────────────────────────────────────────────
     if name in ("resnet18", "resnet34", "resnet50", "resnet101"):
 
-        # Import from torchvision directly — guaranteed architecture match
         from torchvision.models import (
             resnet18  as tv_r18,
             resnet34  as tv_r34,
@@ -265,26 +323,91 @@ def _build_backbone(name, output_stride, pretrained, norm_layer,
         _tv = {"resnet18": tv_r18, "resnet34": tv_r34,
                "resnet50": tv_r50, "resnet101": tv_r101}
 
-        # Build with NO weights first
+        # Step 1: Build architecture with NO weights
         base = _tv[name](weights=None)
 
-        # Load weights
-        if backbone_weights_path and Path(backbone_weights_path).exists():
-            print(f"[Backbone] Loading weights from {backbone_weights_path}")
-            state_dict = torch.load(backbone_weights_path,
-                                    map_location="cpu", weights_only=False)
-            # state_dict may be wrapped — torchvision saves bare state_dicts
-            if "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-            missing, unexpected = base.load_state_dict(state_dict, strict=False)
-            if missing:
-                print(f"[Backbone] Missing keys ({len(missing)}): {missing[:5]} ...")
-            if unexpected:
-                print(f"[Backbone] Unexpected keys ({len(unexpected)}): {unexpected[:5]} ...")
-        elif pretrained:
-            from src.seg.models.backbones.resnet import model_urls
-            print(f"[Backbone] Downloading pretrained {name}")
-            base.load_state_dict(model_zoo.load_url(model_urls[name]))
+        # Step 2: Load pretrained weights BEFORE applying dilation
+        #         (weights are for standard stride=2 conv — load them first,
+        #          then change stride/dilation/padding in-place)
+        
+        if use_pretrained_backbone:
+
+            # ---------------------------------------------------------
+            # Case 1: local pretrained weights
+            # ---------------------------------------------------------
+            if (
+                backbone_weights_path is not None
+                and Path(backbone_weights_path).exists()
+            ):
+
+                print(f"[Backbone] Loading local weights: {backbone_weights_path}")
+
+                state_dict = torch.load(
+                    backbone_weights_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+
+                # checkpoint wrapper support
+                if "state_dict" in state_dict:
+                    state_dict = state_dict["state_dict"]
+
+                missing, unexpected = base.load_state_dict(
+                    state_dict,
+                    strict=False,
+                )
+
+                if missing:
+                    print(f"[Backbone] Missing keys ({len(missing)}): {missing[:3]} ...")
+
+                if unexpected:
+                    print(f"[Backbone] Unexpected keys ({len(unexpected)}): {unexpected[:3]} ...")
+
+            # ---------------------------------------------------------
+            # Case 2: download torchvision pretrained weights
+            # ---------------------------------------------------------
+            else:
+                from src.seg.models.backbones.resnet import model_urls
+                print(f"[Backbone] Downloading torchvision pretrained {name}")
+                state_dict = model_zoo.load_url(model_urls[name])
+                base.load_state_dict(state_dict)
+
+        # -------------------------------------------------------------
+        # Case 3: random initialization
+        # -------------------------------------------------------------
+        else:
+            print("[Backbone] Training backbone from scratch")
+        # Step 3: Apply dilation IN-PLACE AFTER weight loading
+        #
+        # output_stride=32: no dilation (standard ResNet)
+        #   layer3: stride=2 → H/16,  layer4: stride=2 → H/32
+        #
+        # output_stride=16: dilate layer4 only
+        #   layer3: stride=2 → H/16 (unchanged)
+        #   layer4: stride=1, dilation=2 → H/16 (same as layer3 output)
+        #
+        # output_stride=8: dilate layer3 AND layer4
+        #   layer3: stride=1, dilation=2 → H/8 (same as layer2 output)
+        #   layer4: stride=1, dilation=4 → H/8 (same spatial size)
+        #
+        # The weights themselves don't need to change — only stride/dilation/padding.
+        # This is the standard trick used in all DeepLab papers.
+
+        if output_stride == 16:
+            print("[Backbone] Applying dilation: layer4 (stride=1, dilation=2)")
+            _apply_dilation_to_layer(base.layer4, stride=1, dilation=2)
+
+        elif output_stride == 8:
+            print("[Backbone] Applying dilation: layer3 (dilation=2), layer4 (dilation=4)")
+            _apply_dilation_to_layer(base.layer3, stride=1, dilation=2)
+            _apply_dilation_to_layer(base.layer4, stride=1, dilation=4)
+
+        elif output_stride == 32:
+            print("[Backbone] No dilation (output_stride=32, standard ResNet)")
+            # No changes needed
+
+        else:
+            raise ValueError(f"output_stride must be 8, 16, or 32. Got {output_stride}")
 
         backbone = _ResNetBackbone(base)
 
@@ -304,7 +427,7 @@ def _build_backbone(name, output_stride, pretrained, norm_layer,
         if backbone_weights_path and Path(backbone_weights_path).exists():
             print(f"[Backbone] Loading weights from {backbone_weights_path}")
             state_dict = torch.load(backbone_weights_path,
-                                    map_location="cpu", weights_only=True)
+                                    map_location="cpu", weights_only=False)
             if "state_dict" in state_dict:
                 state_dict = state_dict["state_dict"]
             base.load_state_dict(state_dict, strict=False)
@@ -314,7 +437,6 @@ def _build_backbone(name, output_stride, pretrained, norm_layer,
             base.load_state_dict(model_zoo.load_url(url))
 
         backbone = _MobileNetV2Backbone(base)
-        # c1: 24ch (stride 4), c3: 96ch (stride 16), c4: 1280ch (stride 32)
         return backbone, 24, 96, 1280
 
     raise ValueError(

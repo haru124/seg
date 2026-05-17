@@ -1,26 +1,29 @@
 # config/experiments/exp1.yaml
 # ================================
-# Experiment 1: ResNet50 + SGD + OHEM CE (paper baseline)
+# Experiment 1: ResNet50 + SGD + CE 
 #
 # This follows the DeepLabV3+ paper exactly:
 #   - ResNet50 backbone with output_stride=16
 #   - SGD optimizer with poly learning rate decay
-#   - Online Hard Example Mining (OHEM) Cross-Entropy loss
+#   - Cross-Entropy loss
+
 #   - Auxiliary loss from intermediate decoder
 #
 # Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp1_resnet50_sgd_ohem"
+  id: "exp1_resnet50_sgd_ce"
   description: "DeepLabV3+ ResNet50, SGD poly-lr, OHEM CE — paper baseline"
 
 model:
   backbone: "resnet50"
   output_stride: 16
-  pretrained_backbone: true
+  use_pretrained_backbone: true
+  backbone_weights_path: "weights/resnet50.pth"
+  use_jpu: false
 
 training:
-  epochs: 80
+  epochs: 60
   lr: 0.007
   lr_scheduler: "poly"
   momentum: 0.9
@@ -30,20 +33,24 @@ training:
   aux_weight: 0.4
   amp: true
   accumulation_steps: 4
-  grad_clip: null
+  grad_clip: null   #1.0
+
+#loss:
+ # type: "ohem"
+  #kwargs:
+   # thresh: 0.7
+    #min_kept: 100000
+    #aux_weight: 0.4
 
 loss:
-  type: "ohem"
-  kwargs:
-    thresh: 0.7
-    min_kept: 100000
-    aux_weight: 0.4
+  type: "ce"
+  kwargs: {}
 
 tracking:
   mlflow:
     enabled: true
     tracking_uri: "outputs/mlruns"
-    experiment_name: "exp1_resnet50_sgd_ohem"
+    experiment_name: "exp1_resnet50_sgd_ce"
   tensorboard:
     enabled: true
     log_dir: "outputs/tensorboard/exp01"
@@ -52,3 +59,4 @@ checkpoint:
   dir: "outputs/checkpoints/exp01"
   save_top_k: 3
   resume: null
+  #resume: "outputs/checkpoints/exp01/exp01_resnet50_os16_epoch023_loss1.234_mIoU0.456.pth"
