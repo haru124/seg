@@ -15,6 +15,7 @@ data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
   batch_size: 4
   num_workers: 4
+  max_samples: null             # for debugging; null = use full dataset
 
 model:
   name: "deeplabv3_plus"
@@ -22,6 +23,9 @@ model:
   output_stride: 16             # 8 (better) or 16 (lighter on memory)
   pretrained_backbone: true
   pretrained_weights: null
+  backbone_weights_path: null  #  path to manually downloaded weights
+  use_jpu: false              # use Joint Pyramid Upsampling module (adds memory overhead)
+
 
 training:
   epochs: 80

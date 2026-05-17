@@ -32,9 +32,11 @@ Output (during eval):
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pathlib import Path
+
 
 from src.seg.models.nn.basic import _ConvBNReLU
-
+from src.seg.models.nn.jpu import JPU
 
 # ══════════════════════════════════════════════════════════════════════
 # ASPP — Atrous Spatial Pyramid Pooling
@@ -208,14 +210,27 @@ class DeepLabV3Plus(nn.Module):
         aux: bool = True,
         pretrained_base: bool = True,
         norm_layer=nn.BatchNorm2d,
+        use_jpu: bool = False,
+        backbone_weights_path: str = None,
     ):
         super().__init__()
         self.aux = aux
+        self.use_jpu = use_jpu
 
         # Build backbone and get channel info
         self.backbone, c1_channels, c3_channels, c4_channels = \
             _build_backbone(backbone_name, output_stride,
-                            pretrained_base, norm_layer)
+                            pretrained_base, norm_layer, backbone_weights_path)
+        if use_jpu:
+            self.jpu = JPU(
+                in_channels=[c1_channels, c3_channels, c4_channels],
+                width=512,
+                norm_layer=norm_layer
+            )
+            # JPU outputs 4 feature maps, each 512 channels
+            aspp_in_channels = 512 * 4  # = 2048
+        else:
+            aspp_in_channels = c4_channels
 
         # ASPP rates depend on output_stride
         aspp_rates = (6, 12, 18) if output_stride == 16 else (12, 24, 36)
@@ -232,9 +247,16 @@ class DeepLabV3Plus(nn.Module):
 
         # Extract multi-scale features from backbone
         c1, c3, c4 = self.backbone(x)
+        
+        if self.use_jpu:
+            c1, c3, c4, jpu_out = self.jpu(c1, c3, c4)
+            aspp_out = self.aspp(jpu_out)  # Use JPU output instead of C4
+        else:
+            aspp_out = self.aspp(c4)  # Normal path
+
 
         # Main decoder path
-        aspp_out = self.aspp(c4)
+        #aspp_out = self.aspp(c4)
         out = self.head(aspp_out, c1)
         out = F.interpolate(out, size=input_size, mode="bilinear", align_corners=False)
 
@@ -324,8 +346,12 @@ class _MobileNetV2Backbone(nn.Module):
 # Backbone factory
 # ══════════════════════════════════════════════════════════════════════
 
+import torch.utils.model_zoo as model_zoo
+
+
 def _build_backbone(name: str, output_stride: int,
-                    pretrained: bool, norm_layer):
+                    pretrained: bool, norm_layer,
+                    backbone_weights_path: str = None):
     """
     Instantiate the requested backbone and return:
         (backbone_module, c1_channels, c3_channels, c4_channels)
@@ -333,7 +359,9 @@ def _build_backbone(name: str, output_stride: int,
 
     dilated = (output_stride != 32)   # use dilated convs in layers 3 & 4
 
-    # ── ResNet family (standard, from resnet.py) ──────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # ResNet family (standard, from resnet.py)
+    # ══════════════════════════════════════════════════════════════════
     if name in ("resnet18", "resnet34", "resnet50", "resnet101"):
         from src.seg.models.backbones.resnet import (
             resnet18, resnet34, resnet50, resnet101,
@@ -344,7 +372,19 @@ def _build_backbone(name: str, output_stride: int,
             "resnet50":  resnet50,
             "resnet101": resnet101,
         }
-        base = _builders[name](pretrained=pretrained, norm_layer=norm_layer)
+        
+        # ✅ CORRECTED: Create model first WITHOUT pretrained weights
+        base = _builders[name](pretrained=False, norm_layer=norm_layer)
+        
+        # ✅ THEN load weights manually OR auto-download
+        if backbone_weights_path and Path(backbone_weights_path).exists():
+            print(f"[Backbone] Loading manual weights from {backbone_weights_path}")
+            state_dict = torch.load(backbone_weights_path, map_location="cpu")
+            base.load_state_dict(state_dict, strict=False)
+        elif pretrained:
+            print(f"[Backbone] Downloading pretrained weights for {name}")
+            from src.seg.models.backbones.resnet import model_urls
+            base.load_state_dict(model_zoo.load_url(model_urls[name]))
 
         # Apply dilation to layer3/layer4 for output_stride < 32
         if dilated:
@@ -360,7 +400,9 @@ def _build_backbone(name: str, output_stride: int,
 
         return backbone, c1_ch, c3_ch, c4_ch
 
-    # ── ResNetV1b family (dilated by default) ─────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # ResNetV1b family (dilated by default)
+    # ══════════════════════════════════════════════════════════════════
     if name in ("resnet18_v1b", "resnet34_v1b", "resnet50_v1b", "resnet101_v1b"):
         from src.seg.models.backbones.resnetv1b import (
             resnet18_v1b, resnet34_v1b, resnet50_v1b, resnet101_v1b,
@@ -371,8 +413,20 @@ def _build_backbone(name: str, output_stride: int,
             "resnet50_v1b":  resnet50_v1b,
             "resnet101_v1b": resnet101_v1b,
         }
-        base = _builders[name](pretrained=pretrained,
-                               dilated=dilated, norm_layer=norm_layer)
+        
+        # ✅ Create model first
+        base = _builders[name](pretrained=False, dilated=dilated, norm_layer=norm_layer)
+        
+        # ✅ Load weights
+        if backbone_weights_path and Path(backbone_weights_path).exists():
+            print(f"[Backbone] Loading manual weights from {backbone_weights_path}")
+            state_dict = torch.load(backbone_weights_path, map_location="cpu")
+            base.load_state_dict(state_dict, strict=False)
+        elif pretrained:
+            print(f"[Backbone] Downloading pretrained weights for {name}")
+            from src.seg.models.backbones.resnetv1b import model_urls
+            base.load_state_dict(model_zoo.load_url(model_urls[name]))
+        
         backbone = _ResNetBackbone(base)
 
         is_bottleneck = name in ("resnet50_v1b", "resnet101_v1b")
@@ -382,12 +436,25 @@ def _build_backbone(name: str, output_stride: int,
 
         return backbone, c1_ch, c3_ch, c4_ch
 
-    # ── MobileNetV2 ───────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # MobileNetV2
+    # ══════════════════════════════════════════════════════════════════
     if name == "mobilenet_v2":
         from src.seg.models.backbones.mobilenetv2 import get_mobilenet_v2
+        
+        # ✅ Create model first
         base = get_mobilenet_v2(pretrained=False, norm_layer=norm_layer)
-        # MobileNetV2 doesn't have an ImageNet pretrained URL in the repo;
-        # set pretrained=False and load weights manually if available.
+        
+        # ✅ Load weights (MobileNetV2 pretrained available from PyTorch)
+        if backbone_weights_path and Path(backbone_weights_path).exists():
+            print(f"[Backbone] Loading manual weights from {backbone_weights_path}")
+            state_dict = torch.load(backbone_weights_path, map_location="cpu")
+            base.load_state_dict(state_dict, strict=False)
+        elif pretrained:
+            print(f"[Backbone] Downloading MobileNetV2 pretrained weights")
+            mobilenet_url = "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth"
+            base.load_state_dict(model_zoo.load_url(mobilenet_url))
+        
         backbone = _MobileNetV2Backbone(base)
         # c1: 24ch (stride 4), c3: 96ch (stride 16), c4: 1280ch
         return backbone, 24, 96, 1280
@@ -397,7 +464,6 @@ def _build_backbone(name: str, output_stride: int,
         "Supported: resnet18, resnet34, resnet50, resnet101, "
         "resnet18_v1b, resnet34_v1b, resnet50_v1b, resnet101_v1b, mobilenet_v2"
     )
-
 
 def _make_dilated(layer, stride: int, dilation: int):
     """
@@ -425,6 +491,7 @@ def get_segmentation_model(
     aux: bool = True,
     pretrained_base: bool = True,
     norm_layer=nn.BatchNorm2d,
+    backbone_weights_path: str = None,
 ) -> DeepLabV3Plus:
     """
     Build a DeepLabV3+ model ready for Cityscapes training.
@@ -447,5 +514,6 @@ def get_segmentation_model(
         aux             = aux,
         pretrained_base = pretrained_base,
         norm_layer      = norm_layer,
+        backbone_weights_path = backbone_weights_path,
     )
     return model

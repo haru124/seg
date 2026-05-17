@@ -27,6 +27,7 @@ Usage:
     metrics.reset()   # call before next epoch
 """
 
+from matplotlib.pyplot import hist
 import numpy as np
 import torch
 from scipy.ndimage import binary_dilation
@@ -209,12 +210,17 @@ class SegmentationMetrics:
             np.nan,
         )
         boundary_fscore = float(np.nanmean(per_class_bfscore))
-
+         # ✅ ADD: Class-weighted pixel accuracy (Cityscapes standard)
+        
+        class_weights = hist.sum(axis=1) / hist.sum()  # frequency per class
+        weighted_pixel_acc = float((class_weights * cls_acc).sum())
+        
         return {
             "mIoU"                     : miou,
             "per_class_iou"            : per_class_iou.tolist(),
             "fw_iou"                   : fw_iou,
             "mean_pixel_acc"           : mean_pixel_acc,
+            "weighted_pixel_acc"       : weighted_pixel_acc,
             "mean_class_acc"           : mean_class_acc,
             "boundary_iou"             : boundary_iou,
             "boundary_fscore"          : boundary_fscore,

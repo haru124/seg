@@ -20,7 +20,7 @@ The Trainer only knows about the standard interface:
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 from pathlib import Path
 

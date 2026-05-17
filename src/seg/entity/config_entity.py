@@ -25,6 +25,7 @@ class DataConfig:
     image_size: List[int]        # [H, W] e.g. [512, 1024]
     batch_size: int              # per-GPU batch size
     num_workers: int             # DataLoader worker processes
+    max_samples: Optional[int]    # for debugging; None = use full dataset
 
 
 @dataclass
@@ -35,6 +36,8 @@ class ModelConfig:
     output_stride: int                  # 16 (lighter) or 8 (better accuracy)
     pretrained_backbone: bool           # load ImageNet weights for backbone
     pretrained_weights: Optional[str]   # path to full model weights or None
+    backbone_weights_path: Optional[str] # path to backbone weights or None
+    use_jpu: bool                       # whether to use Joint Pyramid Upsampling module (adds memory overhead)
 
 
 @dataclass

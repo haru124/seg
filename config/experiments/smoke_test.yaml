@@ -1,0 +1,42 @@
+# config/experiments/smoke_test.yaml
+experiment:
+  id: "smoke_test"
+  description: "Quick validation with 8 samples"
+
+model:
+  backbone: "resnet34"
+  output_stride: 16
+  pretrained_backbone: false
+  backbone_weights_path: null
+
+data:
+  root: "data"
+  dataset: "cityscapes"
+  num_classes: 19
+  ignore_index: 255
+  image_size: [256, 512]  # Half size for speed
+  batch_size: 2
+  num_workers: 0
+  max_samples: 8  # ✅ ONLY USE 8 IMAGES (4 batches of 2)
+
+training:
+  epochs: 2
+  lr: 0.01
+  lr_scheduler: "poly"
+  optimizer: "sgd"
+  aux_loss: true
+  amp: false
+  accumulation_steps: 1
+
+loss:
+  type: "ce"
+
+tracking:
+  mlflow:
+    enabled: false
+  tensorboard:
+    enabled: false
+
+checkpoint:
+  save_top_k: 1
+  dir: "outputs/checkpoints/smoke_test"

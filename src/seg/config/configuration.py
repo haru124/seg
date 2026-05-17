@@ -6,7 +6,7 @@ then builds a fully-typed ExperimentConfig object.
 
 Deep-merge logic:
   base  = config/config.yaml          (project defaults)
-  exp   = config/experiments/exp_01.yaml  (experiment overrides — optional)
+  exp   = config/experiments/exp1.yaml  (experiment overrides — optional)
   final = deep_merge(base, exp)
 
 Any key present in the experiment yaml overwrites the base value.
@@ -14,7 +14,7 @@ Keys only in base are kept as-is.
 
 Usage:
     from src.seg.config.configuration import get_config
-    cfg = get_config("config/config.yaml", "config/experiments/exp_01.yaml")
+    cfg = get_config("config/config.yaml", "config/experiments/exp1.yaml")
     print(cfg.training.lr)
 """
 
@@ -95,6 +95,7 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         image_size  = d["image_size"],
         batch_size  = d["batch_size"],
         num_workers = d["num_workers"],
+        max_samples  = d.get("max_samples"),
     )
 
     # ── model ──
@@ -105,6 +106,8 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         output_stride      = m["output_stride"],
         pretrained_backbone= m["pretrained_backbone"],
         pretrained_weights = m.get("pretrained_weights"),
+        backbone_weights_path = m.get("backbone_weights_path"),  
+        use_jpu            = m.get("use_jpu", False),  # default to False if not specified
     )
 
     # ── training ──

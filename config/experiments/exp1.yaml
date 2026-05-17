@@ -1,4 +1,4 @@
-# config/experiments/exp_01.yaml
+# config/experiments/exp1.yaml
 # ================================
 # Experiment 1: ResNet50 + SGD + OHEM CE (paper baseline)
 #
@@ -11,7 +11,7 @@
 # Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp01_resnet50_sgd_ohem"
+  id: "exp1_resnet50_sgd_ohem"
   description: "DeepLabV3+ ResNet50, SGD poly-lr, OHEM CE — paper baseline"
 
 model:
@@ -43,7 +43,7 @@ tracking:
   mlflow:
     enabled: true
     tracking_uri: "outputs/mlruns"
-    experiment_name: "exp01_resnet50_sgd_ohem"
+    experiment_name: "exp1_resnet50_sgd_ohem"
   tensorboard:
     enabled: true
     log_dir: "outputs/tensorboard/exp01"

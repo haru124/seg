@@ -1,5 +1,5 @@
 """
-test_inference.py
+inference.py
 -----------------
 Comprehensive evaluation on the test split:
   1. Load best checkpoint
@@ -8,7 +8,7 @@ Comprehensive evaluation on the test split:
   4. Visualize predictions on 5 random samples (side-by-side GT + Pred)
 
 Usage:
-    python test_inference.py --exp_config config/experiments/exp_01.yaml
+    python inference.py --exp_config config/experiments/exp_01.yaml
 """
 
 import argparse
