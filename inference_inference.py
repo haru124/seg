@@ -1,5 +1,5 @@
 """
-test_inference.py
+inference/inference.py
 -----------------
 Comprehensive evaluation on the test split:
   1. Load best checkpoint
