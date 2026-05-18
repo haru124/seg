@@ -70,10 +70,10 @@ tracking:
     experiment_name: "exp1_resnet50_sgd_ce"
   tensorboard:
     enabled: true
-    log_dir: "outputs/tensorboard/exp01"
+    log_dir: "outputs/tensorboard/exp1"
 
 checkpoint:
-  dir: "outputs/checkpoints/exp01"
+  dir: "outputs/checkpoints/exp1"
   save_top_k: 3
   resume: null
   #resume: "outputs/checkpoints/exp01/exp01_resnet50_os16_epoch023_loss1.234_mIoU0.456.pth"
