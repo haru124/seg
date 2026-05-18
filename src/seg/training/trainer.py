@@ -348,10 +348,10 @@ class Trainer:
 
         # ── Confusion matrix ───────────────────────────────────────────
         #  Save confusion matrix: only at key epochs
-        if epoch % 10 == 0 or epoch == cfg.training.epochs:
+        if epoch % 10 == 0 or epoch == self.cfg.training.epochs:
             from src.seg.utils.visualization import save_confusion_matrix
-            cm_path = (Path(cfg.checkpoint.dir).parent / "confusion_matrices" / 
-                        f"{cfg.experiment_id}_epoch{epoch:03d}_cm.png")
+            cm_path = (Path(self.cfg.checkpoint.dir).parent / "confusion_matrices" / 
+                        f"{self.cfg.experiment_id}_epoch{epoch:03d}_cm.png")
             save_confusion_matrix(
                 val_metrics["confusion_matrix"],
                 str(cm_path),

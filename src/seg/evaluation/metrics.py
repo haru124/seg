@@ -200,6 +200,11 @@ class SegmentationMetrics:
             weighted_pixel_acc = float(np.nansum(class_weights * cls_acc))
 
             # ── Boundary metrics ───────────────────────────────────────
+            boundary_iou    = 0.0
+            boundary_fscore = 0.0
+            per_class_biou = np.zeros(self.num_classes, dtype=np.float64)
+            per_class_bfscore = np.zeros(self.num_classes, dtype=np.float64)
+            
             if self.compute_boundary:
 
                 b_tp   = self.boundary_tp.astype(np.float64)
@@ -223,13 +228,7 @@ class SegmentationMetrics:
                 per_class_bfscore = np.where(b_pr_sum > 0,
                                             2.0 * b_prec * b_rec / b_pr_sum,
                                             np.nan)
-                boundary_fscore   = float(np.nanmean(per_class_bfscore))
-            
-            else:
-                boundary_iou    = 0.0
-                boundary_fscore = 0.0
-                per_class_biou_list    = [0.0] * self.num_classes
-                per_class_bfscore_list = [0.0] * self.num_classes
+                boundary_fscore   = float(np.nanmean(per_class_bfscore)) 
 
         return {
             # ── Primary metric ──────────────────────────────────────────
