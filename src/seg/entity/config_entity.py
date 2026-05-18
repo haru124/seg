@@ -59,6 +59,8 @@ class TrainingConfig:
     amp: bool                  # mixed precision (FP16) — essential for 4 GB GPU
     accumulation_steps: int    # gradient accumulation; effective batch = batch*steps
     grad_clip: Optional[float] # max gradient norm; None = no clipping
+    early_stopping_patience: int = 10
+    early_stopping_min_delta: float = 0.001
 
 
 @dataclass

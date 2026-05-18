@@ -68,5 +68,3 @@ checkpoint:
   save_top_k: 3                 # keep only top-k by val mIoU
   resume: null                  # path to checkpoint or null
 
-
-  viz:

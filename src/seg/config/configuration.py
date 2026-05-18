@@ -129,6 +129,8 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         amp               = t.get("amp", True),
         accumulation_steps= t.get("accumulation_steps", 1),
         grad_clip         = t.get("grad_clip"),
+        early_stopping_patience= t.get("early_stopping_patience"),
+        early_stopping_min_delta = t.get("early_stopping_min_delta", 0.001),
     )
 
     # ── loss ──

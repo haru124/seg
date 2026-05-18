@@ -27,3 +27,5 @@ flake8>=3.9.0
 
 #for ONNX export and inference (optional)
 onnxruntime>=1.10.0
+
+seaborn

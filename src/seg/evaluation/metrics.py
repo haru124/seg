@@ -50,7 +50,7 @@ class SegmentationMetrics:
     """
 
     def __init__(self, num_classes: int, ignore_index: int = 255,
-                 boundary_dilation: int = 3):
+                 boundary_dilation: int = 3, compute_boundary: bool = True):
         self.num_classes       = num_classes
         self.ignore_index      = ignore_index
         self.boundary_dilation = boundary_dilation
@@ -59,6 +59,7 @@ class SegmentationMetrics:
         self.confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
 
         # boundary accumulators per class
+        self.compute_boundary = compute_boundary
         self.boundary_tp   = np.zeros(num_classes, dtype=np.int64)
         self.boundary_pred = np.zeros(num_classes, dtype=np.int64)
         self.boundary_gt   = np.zeros(num_classes, dtype=np.int64)
@@ -101,7 +102,8 @@ class SegmentationMetrics:
             self.confusion_matrix += hist
 
             # ── boundary metrics ──────────────────────────────────────
-            self._update_boundary(pred, target)
+            if self.compute_boundary:
+                self._update_boundary(pred, target)
 
     # ── Boundary helpers ───────────────────────────────────────────────
 
@@ -198,29 +200,36 @@ class SegmentationMetrics:
             weighted_pixel_acc = float(np.nansum(class_weights * cls_acc))
 
             # ── Boundary metrics ───────────────────────────────────────
+            if self.compute_boundary:
 
-            b_tp   = self.boundary_tp.astype(np.float64)
-            b_pred = self.boundary_pred.astype(np.float64)
-            b_gt   = self.boundary_gt.astype(np.float64)
+                b_tp   = self.boundary_tp.astype(np.float64)
+                b_pred = self.boundary_pred.astype(np.float64)
+                b_gt   = self.boundary_gt.astype(np.float64)
 
-            b_fp    = b_pred - b_tp
-            b_fn    = b_gt   - b_tp
-            b_denom = b_tp + b_fp + b_fn
+                b_fp    = b_pred - b_tp
+                b_fn    = b_gt   - b_tp
+                b_denom = b_tp + b_fp + b_fn
 
-            # Boundary IoU per class
-            per_class_biou = np.where(b_denom > 0, b_tp / b_denom, np.nan)
-            boundary_iou   = float(np.nanmean(per_class_biou))
+                # Boundary IoU per class
+                per_class_biou = np.where(b_denom > 0, b_tp / b_denom, np.nan)
+                boundary_iou   = float(np.nanmean(per_class_biou))
 
-            # Boundary precision and recall
-            b_prec = np.where(b_pred > 0, b_tp / b_pred, np.nan)
-            b_rec  = np.where(b_gt   > 0, b_tp / b_gt,   np.nan)
+                # Boundary precision and recall
+                b_prec = np.where(b_pred > 0, b_tp / b_pred, np.nan)
+                b_rec  = np.where(b_gt   > 0, b_tp / b_gt,   np.nan)
 
-            # Boundary F-score
-            b_pr_sum          = b_prec + b_rec
-            per_class_bfscore = np.where(b_pr_sum > 0,
-                                         2.0 * b_prec * b_rec / b_pr_sum,
-                                         np.nan)
-            boundary_fscore   = float(np.nanmean(per_class_bfscore))
+                # Boundary F-score
+                b_pr_sum          = b_prec + b_rec
+                per_class_bfscore = np.where(b_pr_sum > 0,
+                                            2.0 * b_prec * b_rec / b_pr_sum,
+                                            np.nan)
+                boundary_fscore   = float(np.nanmean(per_class_bfscore))
+            
+            else:
+                boundary_iou    = 0.0
+                boundary_fscore = 0.0
+                per_class_biou_list    = [0.0] * self.num_classes
+                per_class_bfscore_list = [0.0] * self.num_classes
 
         return {
             # ── Primary metric ──────────────────────────────────────────

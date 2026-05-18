@@ -107,6 +107,7 @@ class Trainer:
         self.metrics = SegmentationMetrics(
             num_classes=cfg.data.num_classes,
             ignore_index=cfg.data.ignore_index,
+            compute_boundary= False
         )
 
         self.logger = setup_logger(
@@ -209,6 +210,7 @@ class Trainer:
         self.model.eval()
         self.metrics.reset()
         total_loss = 0.0
+        self.metrics.compute_boundary = (epoch%5 == 0)
 
         pbar = tqdm(
             self.val_loader,
@@ -443,8 +445,8 @@ class Trainer:
 
             # ── Cleanup ────────────────────────────────────────────────────
             # Save final confusion matrix regardless of cm_interval
-            if val_metrics:
-                self._save_visualizations(val_metrics, epoch)
+        if val_metrics:
+            self._save_visualizations(val_metrics, epoch)
 
         if self.tb:
             self.tb.close()
