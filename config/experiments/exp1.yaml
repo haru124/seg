@@ -1,27 +1,27 @@
 # config/experiments/exp1.yaml
 # ================================
-# Experiment 1: ResNet50 + SGD + CE 
+# Experiment 1: ResNet50 + SGD + Weighted CE
 #
 # This follows the DeepLabV3+ paper exactly:
 #   - ResNet50 backbone with output_stride=16
 #   - SGD optimizer with poly learning rate decay
-#   - Focal +Dice loss
+#   - Weighted CE
 
 #   - Auxiliary loss from intermediate decoder
 #
 # Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp1_resnet50_sgd_focal_dice"
-  description: "DeepLabV3+ ResNet50, SGD poly-lr, Focal+ Dice — paper baseline"
+  id: "exp1_resnet50_sgd_wce"
+  description: "DeepLabV3+ ResNet50, SGD poly-lr, Weighted CE"
 
 data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
   batch_size: 4
   num_workers: 4
-  max_train_samples: 10 #500            # for debugging; null = use full dataset
-  max_val_samples: 4 #93
-  max_test_samples: 2 #55 
+  max_train_samples: 500 #10            # for debugging; null = use full dataset
+  max_val_samples: 93 #4
+  max_test_samples: 55 #2
 
 
 model:
@@ -57,7 +57,7 @@ training:
     #aux_weight: 0.4
 
 loss:
-  type: "focal"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
+  type: "weighted_ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
   kwargs: 
     gamma: 2.0          # Focal focusing strength (standard)
     dice_weight: 0.6    # Higher Dice weight for small datasets
