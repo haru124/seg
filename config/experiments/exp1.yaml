@@ -5,15 +5,15 @@
 # This follows the DeepLabV3+ paper exactly:
 #   - ResNet50 backbone with output_stride=16
 #   - SGD optimizer with poly learning rate decay
-#   - Cross-Entropy loss
+#   - Focal +Dice loss
 
 #   - Auxiliary loss from intermediate decoder
 #
 # Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp1_resnet50_sgd_"
-  description: "DeepLabV3+ ResNet50, SGD poly-lr, OHEM CE — paper baseline"
+  id: "exp1_resnet50_sgd_focal_dice"
+  description: "DeepLabV3+ ResNet50, SGD poly-lr, Focal+ Dice — paper baseline"
 
 data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
@@ -34,7 +34,7 @@ model:
 
 training:
   epochs: 30
-  lr: 0.002
+  lr: 0.005
   lr_scheduler: "poly"
   momentum: 0.9
   weight_decay: 1.0e-4

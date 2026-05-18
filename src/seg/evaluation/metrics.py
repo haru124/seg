@@ -50,7 +50,7 @@ class SegmentationMetrics:
     """
 
     def __init__(self, num_classes: int, ignore_index: int = 255,
-                 boundary_dilation: int = 3, compute_boundary: bool = True):
+                 boundary_dilation: int = 3, compute_boundary: bool = False):
         self.num_classes       = num_classes
         self.ignore_index      = ignore_index
         self.boundary_dilation = boundary_dilation

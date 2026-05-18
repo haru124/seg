@@ -258,65 +258,87 @@ class Trainer:
             f"f1={val_metrics['mean_f1']:.4f} | "
             f"b_iou={val_metrics['boundary_iou']:.4f}"
         )
+        if epoch %5 == 0:
 
-        # Per-class IoU to file logger
-        per_iou = val_metrics.get("per_class_iou", [])
-        if per_iou:
-            iou_strs = [
-                f"  {name:<20}: {v:.4f}" if not np.isnan(v) else f"  {name:<20}: N/A"
-                for name, v in zip(class_names, per_iou)
-            ]
-            self.logger.info("Per-class IoU:\n" + "\n".join(iou_strs))
+            # Per-class IoU to file logger
+            per_iou = val_metrics.get("per_class_iou", [])
+            if per_iou:
+                iou_strs = [
+                    f"  {name:<20}: {v:.4f}" if not np.isnan(v) else f"  {name:<20}: N/A"
+                    for name, v in zip(class_names, per_iou)
+                ]
+                self.logger.info("Per-class IoU:\n" + "\n".join(iou_strs))
 
         # ── TensorBoard ────────────────────────────────────────────────
         if self.tb:
             # Loss
             self.tb.log_scalar("Loss/train",           train_loss,                          epoch)
-            self.tb.log_scalar("Loss/val",             val_metrics["val_loss"],             epoch)
+            if val_metrics:
+                self.tb.log_scalar("Loss/val",             val_metrics["val_loss"],             epoch)
 
-            # Overall metrics
-            self.tb.log_scalar("Metrics/mIoU",         val_metrics["mIoU"],                 epoch)
-            self.tb.log_scalar("Metrics/fw_iou",       val_metrics["fw_iou"],               epoch)
-            self.tb.log_scalar("Metrics/pixel_acc",    val_metrics["mean_pixel_acc"],        epoch)
-            self.tb.log_scalar("Metrics/class_acc",    val_metrics["mean_class_acc"],        epoch)
-            self.tb.log_scalar("Metrics/precision",    val_metrics["mean_precision"],        epoch)
-            self.tb.log_scalar("Metrics/recall",       val_metrics["mean_recall"],           epoch)
-            self.tb.log_scalar("Metrics/f1",           val_metrics["mean_f1"],               epoch)
-            self.tb.log_scalar("Metrics/boundary_iou", val_metrics["boundary_iou"],          epoch)
-            self.tb.log_scalar("Metrics/boundary_f",   val_metrics["boundary_fscore"],       epoch)
-
-            # Per-class IoU as individual scalars (shows up nicely in TB)
-            for name, v in zip(class_names, per_iou):
-                if not np.isnan(v):
-                    self.tb.log_scalar(f"PerClassIoU/{name}", v, epoch)
-
+                # Overall metrics
+                self.tb.log_scalar("Metrics/mIoU",         val_metrics["mIoU"],                 epoch)
+                self.tb.log_scalar("Metrics/fw_iou",       val_metrics["fw_iou"],               epoch)
+                self.tb.log_scalar("Metrics/pixel_acc",    val_metrics["mean_pixel_acc"],        epoch)
+                self.tb.log_scalar("Metrics/class_acc",    val_metrics["mean_class_acc"],        epoch)
+                self.tb.log_scalar("Metrics/precision",    val_metrics["mean_precision"],        epoch)
+                self.tb.log_scalar("Metrics/recall",       val_metrics["mean_recall"],           epoch)
+                self.tb.log_scalar("Metrics/f1",           val_metrics["mean_f1"],               epoch)
+                
+                #self.tb.log_scalar("Metrics/boundary_iou", val_metrics["boundary_iou"],          epoch)
+                #self.tb.log_scalar("Metrics/boundary_f",   val_metrics["boundary_fscore"],       epoch)
+                # ✅ Per-class metrics: LOG ONLY EVERY 5 EPOCHS
+                if epoch % 5 == 0:
+                    per_class_iou = val_metrics["per_class_iou"]
+                    for cls_idx, (cls_name, iou) in enumerate(
+                        zip(CITYSCAPES_CLASSES, per_class_iou)
+                    ):
+                        if not np.isnan(iou):
+                            self.tb.log_scalar(f"PerClass_IoU/{cls_name}", iou, epoch)
+            
             # LR
             current_lr = self.optimizer.param_groups[0]["lr"]
             self.tb.log_scalar("LR", current_lr, epoch)
 
         # ── MLflow ─────────────────────────────────────────────────────
+        # ── MLflow logging ──
         if self.mlf:
             log_dict = {
-                "train_loss"       : train_loss,
-                "val_loss"         : val_metrics["val_loss"],
-                "mIoU"             : val_metrics["mIoU"],
-                "fw_iou"           : val_metrics["fw_iou"],
-                "mean_pixel_acc"   : val_metrics["mean_pixel_acc"],
-                "mean_class_acc"   : val_metrics["mean_class_acc"],
-                "mean_precision"   : val_metrics["mean_precision"],
-                "mean_recall"      : val_metrics["mean_recall"],
-                "mean_f1"          : val_metrics["mean_f1"],
-                "boundary_iou"     : val_metrics["boundary_iou"],
-                "boundary_fscore"  : val_metrics["boundary_fscore"],
-                "lr"               : self.optimizer.param_groups[0]["lr"],
+                "train_loss": train_loss,
             }
-            # Per-class IoU to MLflow
-            for name, v in zip(class_names, per_iou):
-                if not np.isnan(v):
-                    log_dict[f"iou_{name.replace(' ', '_')}"] = v
-
+            
+            if val_metrics:
+                # Main metrics
+                log_dict.update({
+                    "val_loss": val_metrics["val_loss"],
+                    "mIoU": val_metrics["mIoU"],
+                    "fw_iou": val_metrics["fw_iou"],
+                    "pixel_acc": val_metrics["mean_pixel_acc"],
+                    "class_acc": val_metrics["mean_class_acc"],
+                    "precision": val_metrics["mean_precision"],
+                    "recall": val_metrics["mean_recall"],
+                    "f1": val_metrics["mean_f1"],
+                    "boundary_iou": val_metrics["boundary_iou"],
+                    "boundary_fscore": val_metrics["boundary_fscore"],
+                })
+                
+                # Per-class metrics: LOG ONLY EVERY 5 EPOCHS
+                if epoch % 5 == 0:
+                    for cls_idx, cls_name in enumerate(CITYSCAPES_CLASSES):
+                        iou = val_metrics["per_class_iou"][cls_idx]
+                        precision = val_metrics["per_class_precision"][cls_idx]
+                        recall = val_metrics["per_class_recall"][cls_idx]
+                        
+                        if not np.isnan(iou):
+                            log_dict[f"iou_{cls_name}"] = float(iou)
+                        if not np.isnan(precision):
+                            log_dict[f"precision_{cls_name}"] = float(precision)
+                        if not np.isnan(recall):
+                            log_dict[f"recall_{cls_name}"] = float(recall)
+            
             self.mlf.log_metrics(log_dict, step=epoch)
-
+        
+        
     def _save_visualizations(self, val_metrics: dict, epoch: int):
         """Save confusion matrix PNG and per-class IoU bar chart."""
         from src.seg.utils.visualization import save_confusion_matrix, plot_class_iou
@@ -325,13 +347,16 @@ class Trainer:
         class_names = CITYSCAPES_CLASSES[:num_classes]
 
         # ── Confusion matrix ───────────────────────────────────────────
-        cm_path = self.viz_dir / f"confusion_matrix_epoch{epoch:03d}.png"
-        save_confusion_matrix(
-            val_metrics["confusion_matrix"],
-            str(cm_path),
-            class_names=class_names,
-            normalize=True,
-        )
+        #  Save confusion matrix: only at key epochs
+        if epoch % 10 == 0 or epoch == cfg.training.epochs:
+            from src.seg.utils.visualization import save_confusion_matrix
+            cm_path = (Path(cfg.checkpoint.dir).parent / "confusion_matrices" / 
+                        f"{cfg.experiment_id}_epoch{epoch:03d}_cm.png")
+            save_confusion_matrix(
+                val_metrics["confusion_matrix"],
+                str(cm_path),
+                normalize=True,
+            )
         # Log to MLflow as artifact
         if self.mlf:
             try:
