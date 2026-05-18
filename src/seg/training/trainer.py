@@ -14,6 +14,7 @@ What gets logged where:
 """
 
 import torch
+import time
 import torch.nn as nn
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
@@ -162,8 +163,9 @@ class Trainer:
         )
 
     # ── Train one epoch ────────────────────────────────────────────────
-
-    def _train_epoch(self, epoch: int) -> float:
+    
+    def _train_epoch(self, epoch: int):
+        start_time = time.time()
         self.model.train()
         total_loss = 0.0
         accum      = self.cfg.training.accumulation_steps
@@ -200,13 +202,15 @@ class Trainer:
             batch_loss  = loss.item() * accum
             total_loss += batch_loss
             pbar.set_postfix(loss=f"{batch_loss:.4f}")
-
-        return total_loss / len(self.train_loader)
+        
+        epoch_time = time.time() - start_time
+        return total_loss / len(self.train_loader), epoch_time
 
     # ── Validate one epoch ─────────────────────────────────────────────
 
     @torch.no_grad()
     def _val_epoch(self, epoch: int) -> dict:
+        val_start_time = time.time()
         self.model.eval()
         self.metrics.reset()
         total_loss = 0.0
@@ -234,8 +238,12 @@ class Trainer:
             total_loss += loss.item()
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
+         
         result             = self.metrics.compute()
         result["val_loss"] = total_loss / len(self.val_loader)
+        val_time = time.time() - val_start_time
+        result["val_time"] = val_time
+        
         return result
 
     # ── Logging helpers ────────────────────────────────────────────────
@@ -253,10 +261,8 @@ class Trainer:
             f"mIoU={val_metrics['mIoU']:.4f} | "
             f"fw_iou={val_metrics['fw_iou']:.4f} | "
             f"px_acc={val_metrics['mean_pixel_acc']:.4f} | "
-            f"prec={val_metrics['mean_precision']:.4f} | "
-            f"recall={val_metrics['mean_recall']:.4f} | "
-            f"f1={val_metrics['mean_f1']:.4f} | "
-            f"b_iou={val_metrics['boundary_iou']:.4f}"
+            f"train_time={val_metrics['train_time']:.1f}s | "
+            f"val_time={val_metrics['val_time']:.1f}s"
         )
         if epoch %5 == 0:
 
@@ -409,7 +415,7 @@ class Trainer:
         for epoch in range(self.start_epoch, cfg.training.epochs + 1):
 
             # ── Train ──────────────────────────────────────────────────
-            train_loss = self._train_epoch(epoch)
+            train_loss, train_time = self._train_epoch(epoch)
 
             # ── Validate ───────────────────────────────────────────────
             val_metrics = {}
@@ -417,12 +423,15 @@ class Trainer:
                 val_metrics                = self._val_epoch(epoch)
                 val_metrics["train_loss"] = train_loss
 
+                val_metrics["train_time"] = train_time
+                
                 # Log all scalars + per-class
                 self._log_scalars(val_metrics, train_loss, epoch)
 
                 # Save confusion matrix + IoU chart every cm_interval epochs
                 if epoch % self.cm_interval == 0:
                     self._save_visualizations(val_metrics, epoch)
+                
 
             else:
                 self.logger.info(f"Epoch {epoch:03d} | train_loss={train_loss:.4f}")
