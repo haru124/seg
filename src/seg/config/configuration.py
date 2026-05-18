@@ -99,7 +99,9 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         image_size  = d["image_size"],
         batch_size  = d["batch_size"],
         num_workers = d["num_workers"],
-        max_samples  = d.get("max_samples"),
+        max_train_samples  = d.get("max_train_samples"),
+        max_val_samples = d.get("max_val_samples"),
+        max_test_samples = d.get("max_test_samples"),
     )
 
     # ── model ──

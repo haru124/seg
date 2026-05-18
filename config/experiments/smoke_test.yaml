@@ -14,10 +14,10 @@ data:
   image_size: [256, 512]
   batch_size: 2
   num_workers: 0
-  max_samples: 8
+  max_samples: null
 
 training:
-  epochs: 2
+  epochs: 1
   lr: 0.01
   lr_scheduler: "poly"
   momentum: 0.9

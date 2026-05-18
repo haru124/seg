@@ -15,7 +15,11 @@ data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
   batch_size: 4
   num_workers: 4
-  max_samples: null             # for debugging; null = use full dataset
+  max_train_samples: null             # for debugging; null = use full dataset
+  max_val_samples: null   
+  max_test_samples: null   
+
+
 
 model:
   name: "deeplabv3_plus"
@@ -27,7 +31,7 @@ model:
 
 
 training:
-  epochs: 80
+  epochs: 50
   lr: 0.007
   lr_scheduler: "poly"          # poly | cosine | step
   momentum: 0.9
@@ -38,9 +42,12 @@ training:
   grad_clip: null               # max grad norm; null = no clipping
   amp: true                     # mixed precision (FP16) — essential for 4 GB GPU
   accumulation_steps: 4         # gradient accumulation; effective_batch = batch * steps
+  early_stopping_patience: 10 #stop if no mIoU improvement for 10 epochs
+  early_stopping_min_delta: 0.001  # minimum improvement to count
+
 
 loss:
-  type: "ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce
+  type: "ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
   kwargs: {}                    # loss-specific hyperparameters
 
 evaluation:
@@ -60,3 +67,6 @@ checkpoint:
   dir: "outputs/checkpoints"
   save_top_k: 3                 # keep only top-k by val mIoU
   resume: null                  # path to checkpoint or null
+
+
+  viz:

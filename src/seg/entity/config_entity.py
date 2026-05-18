@@ -25,8 +25,9 @@ class DataConfig:
     image_size: List[int]        # [H, W] e.g. [512, 1024]
     batch_size: int              # per-GPU batch size
     num_workers: int             # DataLoader worker processes
-    max_samples: Optional[int]    # for debugging; None = use full dataset
-
+    max_train_samples: Optional[int]    # for debugging; None = use full dataset
+    max_val_samples: Optional[int]
+    max_test_samples: Optional[int]
 
 @dataclass
 class ModelConfig:
