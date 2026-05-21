@@ -79,7 +79,48 @@ def save_batch_grid(images, preds, targets, save_path, max_images=4):
     plt.close(fig)
     print(f"[Viz] Saved batch grid → {save_path}")
 
+def plot_metrics_bar(metrics_dict, save_path,
+                     title="Evaluation Metrics"):
+    """
+    Plot scalar metrics as a bar chart.
 
+    Args:
+        metrics_dict: dict of metric_name -> value
+        save_path: output PNG path
+    """
+
+    names  = list(metrics_dict.keys())
+    values = list(metrics_dict.values())
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    bars = ax.bar(names, values, color="#2196F3")
+
+    # Add labels on bars
+    for bar, value in zip(bars, values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{value:.3f}",
+            ha="center",
+            fontsize=9,
+        )
+
+    ax.set_ylim(0, max(1.0, max(values) + 0.1))
+    ax.set_ylabel("Score")
+    ax.set_title(title)
+
+    plt.xticks(rotation=20)
+
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"[Viz] Saved metrics bar chart → {save_path}")
+
+    
 def plot_class_iou(per_class_iou, save_path, title="Per-Class IoU",
                    class_names=CITYSCAPES_CLASSES):
     """Horizontal bar chart of per-class IoU, sorted descending."""
@@ -121,49 +162,3 @@ def plot_class_iou(per_class_iou, save_path, title="Per-Class IoU",
     print(f"[Viz] Saved IoU chart → {save_path}")
 
 
-def save_confusion_matrix(confusion_matrix, save_path,
-                           class_names=CITYSCAPES_CLASSES,
-                           normalize=True):
-    """
-    Save confusion matrix as a heatmap PNG.
-
-    normalize=True  → row-normalized (shows per-class recall, easier to read)
-    normalize=False → raw pixel counts
-    """
-    try:
-        import seaborn as sns
-    except ImportError:
-        print("[Viz] seaborn not installed — skipping confusion matrix. pip install seaborn")
-        return
-
-    cm = np.array(confusion_matrix, dtype=np.float64)
-    if normalize:
-        row_sums = cm.sum(axis=1, keepdims=True)
-        cm = np.where(row_sums > 0, cm / row_sums, 0.0)
-
-    fig, ax = plt.subplots(figsize=(16, 14))
-    sns.heatmap(
-        cm,
-        annot=False,
-        fmt=".2f" if normalize else "d",
-        cmap="Blues",
-        xticklabels=class_names[:cm.shape[1]],
-        yticklabels=class_names[:cm.shape[0]],
-        cbar_kws={"label": "Recall (row-normalized)" if normalize else "Pixel Count"},
-        ax=ax,
-        vmin=0, vmax=1 if normalize else None,
-    )
-    ax.set_xlabel("Predicted Class", fontsize=12)
-    ax.set_ylabel("True Class", fontsize=12)
-    ax.set_title(
-        f"Confusion Matrix{' (Normalized by GT class)' if normalize else ''}",
-        fontsize=14, fontweight="bold",
-    )
-    plt.xticks(rotation=45, ha="right", fontsize=8)
-    plt.yticks(rotation=0, fontsize=8)
-    plt.tight_layout()
-
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[Viz] Saved confusion matrix → {save_path}")

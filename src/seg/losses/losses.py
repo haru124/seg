@@ -393,6 +393,63 @@ class CEDiceLoss(nn.Module):
         loss = loss + _aux_loss(preds, target, self.aux_weight, self.ignore_index)
         return loss
 
+class WeightedCEDiceLoss(nn.Module):
+    """
+    Weighted Cross-Entropy + Dice.
+
+    total = WeightedCE + dice_weight * Dice
+
+    Good for:
+        - class imbalance
+        - small/thin objects
+        - segmentation overlap quality
+
+    Args:
+        class_weights : tensor of class weights
+        dice_weight   : Dice contribution strength
+        aux_weight    : aux branch weight
+        ignore_index  : ignored label
+    """
+
+    def __init__(
+        self,
+        class_weights=None,
+        dice_weight=0.5,
+        aux_weight=0.4,
+        ignore_index=255,
+    ):
+        super().__init__()
+
+        self.wce = WeightedCrossEntropyLoss(
+            class_weights=class_weights,
+            aux_weight=0.0,
+            ignore_index=ignore_index,
+        )
+
+        self.dice = DiceLoss(
+            aux_weight=0.0,
+            ignore_index=ignore_index,
+        )
+
+        self.dice_weight = dice_weight
+        self.aux_weight = aux_weight
+        self.ignore_index = ignore_index
+
+    def forward(self, preds, target):
+
+        loss = (
+            self.wce(preds, target)
+            + self.dice_weight * self.dice(preds, target)
+        )
+
+        loss = loss + _aux_loss(
+            preds,
+            target,
+            self.aux_weight,
+            self.ignore_index,
+        )
+
+        return loss
 
 class CEIoULoss(nn.Module):
     """
@@ -516,6 +573,7 @@ _REGISTRY = {
     "focal_dice"  : FocalDiceLoss,
     "ohem_dice"   : OHEMDiceLoss,
     "lovasz_ce"   : LovaszCELoss,
+    "wce_dice"    : WeightedCEDiceLoss
 }
 
 

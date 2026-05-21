@@ -33,7 +33,7 @@ model:
   use_jpu: false
 
 training:
-  epochs: 30
+  epochs: 50
   lr: 0.005
   lr_scheduler: "poly"
   momentum: 0.9
@@ -44,7 +44,7 @@ training:
   amp: true
   accumulation_steps: 1
   grad_clip: null   #1.0
-  early_stopping_patience: 5 #stop if no mIoU improvement for 5 epochs
+  early_stopping_patience: 15 #stop if no mIoU improvement for 5 epochs
   early_stopping_min_delta: 0.001  # minimum improvement to count
 
 
@@ -58,10 +58,7 @@ training:
 
 loss:
   type: "weighted_ce"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
-  kwargs: 
-    gamma: 2.0          # Focal focusing strength (standard)
-    dice_weight: 0.6    # Higher Dice weight for small datasets
-    aux_weight: 0.4
+  kwargs: {}
 
 tracking:
   mlflow:
@@ -75,5 +72,5 @@ tracking:
 checkpoint:
   dir: "outputs/checkpoints/exp1"
   save_top_k: 3
-  resume: null
+  resume: "outputs/checkpoints/exp1/exp1_resnet50_sgd_wce_epoch023_loss0.4186_mIoU0.4266.pth"
   #resume: "outputs/checkpoints/exp01/exp01_resnet50_os16_epoch023_loss1.234_mIoU0.456.pth"

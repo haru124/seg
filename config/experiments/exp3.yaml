@@ -1,42 +1,79 @@
-# exp_03: MobileNetV2 + Adam + Focal+Dice
-# name: exp03_mobilenetv2_adam_focal_dice
+# config/experiments/exp3.yaml
+# ================================
+# Experiment 3: ResNet50 + Adamw + Focal Dice
+#
+# This follows the DeepLabV3+ paper exactly:
+#   - ResNet50 backbone with output_stride=16
+#   - Adamw optimizer with poly learning rate decay
+#   - Focal Dice 
+
+#   - Auxiliary loss from intermediate decoder
+#
+# Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp03_mobilenetv2_adam_focal_dice"
-  description: "DeepLabV3+ MobileNetV2, Adam cosine, Focal+Dice for imbalance"
+  id: "exp3_adamw_focal_dice"
+  description: "DeepLabV3+ ResNet50, AdamW poly-lr, focal dice"
+
+data:
+  image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
+  batch_size: 4
+  num_workers: 4
+  max_train_samples: 500 #10            # for debugging; null = use full dataset
+  max_val_samples: 93 #4
+  max_test_samples: 55 #2
+
 
 model:
-  backbone: "mobilenet_v2"
-  output_stride: 16
-  pretrained_backbone: true
+  backbone: "resnet50"
+  output_stride: 16 #layer 4 dilation = 2    H/16
+
+  use_pretrained_backbone: true
+  backbone_weights_path: "weights/resnet50.pth"
+  use_jpu: false
 
 training:
-  epochs: 100
-  lr: 1.0e-3
-  lr_scheduler: "cosine"
-  momentum: 0.9
-  weight_decay: 1.0e-4
-  optimizer: "adam"
+  epochs: 50
+  lr: 0.0001
+  lr_scheduler: "poly"
+  #momentum: 0.9
+  weight_decay: 0.0001
+  optimizer: "adamw"
   aux_loss: true
   aux_weight: 0.4
   amp: true
-  accumulation_steps: 2
+  accumulation_steps: 1
+  grad_clip: 1.0
+  early_stopping_patience: 15 #stop if no mIoU improvement for 5 epochs
+  early_stopping_min_delta: 0.001  # minimum improvement to count
+
+
+
+#loss:
+ # type: "ohem"
+  #kwargs:
+   # thresh: 0.7
+    #min_kept: 100000
+    #aux_weight: 0.4
 
 loss:
-  type: "focal_dice"
-  gamma: 2.0
-  dice_weight: 0.5
+  type: "focal_dice"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
+  kwargs: 
+    gamma: 2.0          # Focal focusing strength (standard)
+    dice_weight: 0.6    # Higher Dice weight for small datasets
+    aux_weight: 0.4
 
 tracking:
   mlflow:
     enabled: true
     tracking_uri: "outputs/mlruns"
-    experiment_name: "exp03_mobilenetv2_adam_focal_dice"
+    experiment_name: "exp3_resnet50_adamw_focal_dice"
   tensorboard:
     enabled: true
-    log_dir: "outputs/tensorboard/exp03_mobilenetv2_adam_focal_dice"
+    log_dir: "outputs/tensorboard/exp3"
 
 checkpoint:
-  dir: "outputs/checkpoints/exp03_mobilenetv2_adam_focal_dice"
+  dir: "outputs/checkpoints/exp3"
   save_top_k: 3
   resume: null
+  #resume: "outputs/checkpoints/exp01/exp01_resnet50_os16_epoch023_loss1.234_mIoU0.456.pth"

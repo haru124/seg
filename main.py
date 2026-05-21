@@ -142,8 +142,14 @@ def main(args):
         device=device,
     )
 
-    # ── Train ──
-    trainer.train()
+    #--- TRAIN---#
+    try:
+        trainer.train()
+    except Exception as e:
+        import traceback
+        print("\n[ERROR] Training crashed:\n")
+        traceback.print_exc()
+
 
     print(f"\n{'='*70}")
     print("TRAINING COMPLETE")

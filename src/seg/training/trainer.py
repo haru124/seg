@@ -6,11 +6,9 @@ Training loop for DeepLabV3+ on Cityscapes.
 What gets logged where:
     Logger (file)  : every epoch — loss, mIoU, all scalar metrics
     TensorBoard    : scalars every epoch, per-class IoU as scalars,
-                     confusion matrix image every cfg.viz.cm_interval epochs
+                        
     MLflow         : params once, scalars every epoch, per-class IoU,
-                     confusion matrix PNG as artifact
-    Disk           : confusion matrix PNG, per-class IoU bar chart
-                     (outputs/viz/<exp_id>/)
+                     
 """
 
 import torch
@@ -20,6 +18,7 @@ from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 from pathlib import Path
 import numpy as np
+import json
 
 from src.seg.evaluation.metrics import SegmentationMetrics, CITYSCAPES_CLASSES
 from src.seg.utils.checkpoint import save_checkpoint, load_checkpoint
@@ -131,13 +130,6 @@ class Trainer:
             if cfg.tracking.mlflow_enabled else None
         )
 
-        # Viz output directory
-        self.viz_dir = Path(cfg.checkpoint.dir).parent / "viz" / cfg.experiment_id
-        self.viz_dir.mkdir(parents=True, exist_ok=True)
-
-        # How often to save confusion matrix (every N epochs)
-        self.cm_interval = 5
-
         # Resume
         self.start_epoch = 1
         if cfg.checkpoint.resume:
@@ -161,6 +153,29 @@ class Trainer:
         self.logger.info(
             f"[EarlyStopping] patience={patience}, min_delta={min_delta}, monitor=mIoU"
         )
+
+        # ── Training history ──────────────────────────────────────
+        self.history = {
+            "train": {
+                "epoch": [],
+                "loss": [],
+            },
+            "val": {
+                "epoch": [],
+                "loss": [],
+                "miou": [],
+                "pixel_acc": [],
+                "precision": [],
+                "recall": [],
+                "f1": [],
+            }
+        }
+
+        self.history_path = (
+            Path(cfg.checkpoint.dir).parent
+            / "training_history.json"
+        )
+
 
     # ── Train one epoch ────────────────────────────────────────────────
     
@@ -197,6 +212,8 @@ class Trainer:
                     )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+                if self.scheduler is not None:   #LR step
+                    self.scheduler.step()
                 self.optimizer.zero_grad()
 
             batch_loss  = loss.item() * accum
@@ -344,45 +361,10 @@ class Trainer:
             
             self.mlf.log_metrics(log_dict, step=epoch)
         
-        
-    def _save_visualizations(self, val_metrics: dict, epoch: int):
-        """Save confusion matrix PNG and per-class IoU bar chart."""
-        from src.seg.utils.visualization import save_confusion_matrix, plot_class_iou
 
-        num_classes = self.cfg.data.num_classes
-        class_names = CITYSCAPES_CLASSES[:num_classes]
-
-        # ── Confusion matrix ───────────────────────────────────────────
-        #  Save confusion matrix: only at key epochs
-        if epoch % 10 == 0 or epoch == self.cfg.training.epochs:
-            from src.seg.utils.visualization import save_confusion_matrix
-            cm_path = (Path(self.cfg.checkpoint.dir).parent / "confusion_matrices" / 
-                        f"{self.cfg.experiment_id}_epoch{epoch:03d}_cm.png")
-            save_confusion_matrix(
-                val_metrics["confusion_matrix"],
-                str(cm_path),
-                normalize=True,
-            )
-        # Log to MLflow as artifact
-        if self.mlf:
-            try:
-                self.mlf.log_artifact(str(cm_path))
-            except Exception:
-                pass  # mlflow artifact logging is optional
-
-        # ── Per-class IoU bar chart ────────────────────────────────────
-        iou_path = self.viz_dir / f"per_class_iou_epoch{epoch:03d}.png"
-        plot_class_iou(
-            val_metrics["per_class_iou"],
-            str(iou_path),
-            title=f"Per-Class IoU — Epoch {epoch:03d} | mIoU={val_metrics['mIoU']:.4f}",
-            class_names=class_names,
-        )
-        if self.mlf:
-            try:
-                self.mlf.log_artifact(str(iou_path))
-            except Exception:
-                pass
+    def _save_history(self):
+        with open(self.history_path, "w") as f:
+            json.dump(self.history, f, indent=2)
 
     # ── Main training loop ─────────────────────────────────────────────
 
@@ -425,13 +407,40 @@ class Trainer:
 
                 val_metrics["train_time"] = train_time
                 
+                # ── Save history ───────────────────────────────────
+                self.history["train"]["epoch"].append(epoch)
+                self.history["train"]["loss"].append(train_loss)
+
+                self.history["val"]["epoch"].append(epoch)
+                self.history["val"]["loss"].append(
+                    val_metrics["val_loss"]
+                )
+
+                self.history["val"]["miou"].append(
+                    val_metrics["mIoU"]
+                )
+
+                self.history["val"]["pixel_acc"].append(
+                    val_metrics["mean_pixel_acc"]
+                )
+
+                self.history["val"]["precision"].append(
+                    val_metrics["mean_precision"]
+                )
+
+                self.history["val"]["recall"].append(
+                    val_metrics["mean_recall"]
+                )
+
+                self.history["val"]["f1"].append(
+                    val_metrics["mean_f1"]
+                )
+
+                self._save_history()
+
                 # Log all scalars + per-class
                 self._log_scalars(val_metrics, train_loss, epoch)
 
-                # Save confusion matrix + IoU chart every cm_interval epochs
-                if epoch % self.cm_interval == 0:
-                    self._save_visualizations(val_metrics, epoch)
-                
 
             else:
                 self.logger.info(f"Epoch {epoch:03d} | train_loss={train_loss:.4f}")
@@ -439,10 +448,6 @@ class Trainer:
                     self.tb.log_scalar("Loss/train", train_loss, epoch)
                 if self.mlf:
                     self.mlf.log_metrics({"train_loss": train_loss}, step=epoch)
-
-            # ── LR step ────────────────────────────────────────────────
-            if self.scheduler is not None:
-                self.scheduler.step()
 
             # ── Checkpoint ─────────────────────────────────────────────
             if val_metrics:
@@ -473,15 +478,10 @@ class Trainer:
                         f"no improvement for {self.early_stopping.patience} epochs. "
                         f"Best mIoU: {self.early_stopping.best_value:.4f}"
                     )
-                    # Save final visualizations before stopping
-                    self._save_visualizations(val_metrics, epoch)
                     break   # exits the epoch loop cleanly
 
             # ── Cleanup ────────────────────────────────────────────────────
-            # Save final confusion matrix regardless of cm_interval
-        if val_metrics:
-            self._save_visualizations(val_metrics, epoch)
-
+            
         if self.tb:
             self.tb.close()
         if self.mlf:

@@ -1,42 +1,80 @@
-# exp_02: ResNet34 + AdamW + CE+Dice
-# name: exp02_resnet34_adamw_ce_dice
+# config/experiments/exp2.yaml
+# ================================
+# Experiment 2: ResNet50 + SGD + Focal+Dice
+#
+# This follows the DeepLabV3+ paper exactly:
+#   - ResNet50 backbone with output_stride=16
+#   - SGD optimizer with poly learning rate decay
+#   - Focal + Dice
+
+#   - Auxiliary loss from intermediate decoder
+#
+# Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp02_resnet34_adamw_ce_dice"
-  description: "DeepLabV3+ ResNet34, AdamW cosine, CE+Dice compound loss"
+  id: "exp2_resnet50_sgd_focal_dice"
+  description: "DeepLabV3+ ResNet50, SGD poly-lr, Focal + Dice"
+
+data:
+  image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
+  batch_size: 4
+  num_workers: 4
+  max_train_samples: 500 #10            # for debugging; null = use full dataset
+  max_val_samples: 93 #4
+  max_test_samples: 55 #2
+
 
 model:
-  backbone: "resnet34"
-  output_stride: 16
-  pretrained_backbone: true
+  backbone: "resnet50"
+  output_stride: 16 #layer 4 dilation = 2    H/16
+
+  use_pretrained_backbone: true
+  backbone_weights_path: "weights/resnet50.pth"
+  use_jpu: false
 
 training:
-  epochs: 80
-  lr: 3.0e-4
-  lr_scheduler: "cosine"
-  momentum: 0.9          # unused for AdamW, kept for config consistency
+  epochs: 50
+  lr: 0.005
+  lr_scheduler: "poly"
+  momentum: 0.9
   weight_decay: 1.0e-4
-  optimizer: "adamw"
+  optimizer: "sgd"
   aux_loss: true
   aux_weight: 0.4
   amp: true
-  accumulation_steps: 2   # ResNet34 is lighter, can reduce accumulation
+  accumulation_steps: 1
+  grad_clip: null   #1.0
+  early_stopping_patience: 15 #stop if no mIoU improvement for 5 epochs
+  early_stopping_min_delta: 0.001  # minimum improvement to count
+
+
+
+#loss:
+ # type: "ohem"
+  #kwargs:
+   # thresh: 0.7
+    #min_kept: 100000
+    #aux_weight: 0.4
 
 loss:
-  type: "ce_dice"
-  dice_weight: 0.5
-  aux_weight: 0.4
+  type: "focal_dice"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
+  kwargs: 
+    gamma: 2.0          # Focal focusing strength (standard)
+    dice_weight: 0.6    # Higher Dice weight for small datasets
+    aux_weight: 0.4
 
 tracking:
   mlflow:
     enabled: true
     tracking_uri: "outputs/mlruns"
-    experiment_name: "exp02_resnet34_adamw_ce_dice"
+    experiment_name: "exp2_resnet50_sgd_ce"
   tensorboard:
     enabled: true
-    log_dir: "outputs/tensorboard/exp02_resnet34_adamw_ce_dice"
+    log_dir: "outputs/tensorboard/exp2"
 
 checkpoint:
-  dir: "outputs/checkpoints/exp02_resnet34_adamw_ce_dice"
+  dir: "outputs/checkpoints/exp2"
   save_top_k: 3
   resume: null
+  #"outputs/checkpoints/exp2/exp2_resnet50_sgd_focal_dice_epoch023_loss0.4186_mIoU0.4266.pth"
+  
