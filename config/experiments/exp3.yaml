@@ -75,5 +75,5 @@ tracking:
 checkpoint:
   dir: "outputs/checkpoints/exp3"
   save_top_k: 3
-  resume: null
+  resume: "outputs/checkpoints/exp3/exp3_adamw_focal_dice_epoch009_loss0.5672_mIoU0.4433.pth"
   #resume: "outputs/checkpoints/exp01/exp01_resnet50_os16_epoch023_loss1.234_mIoU0.456.pth"

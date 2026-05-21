@@ -156,6 +156,7 @@ class Trainer:
 
         # ── Training history ──────────────────────────────────────
         self.history = {
+            "experiment_id": cfg.experiment_id,
             "train": {
                 "epoch": [],
                 "loss": [],
@@ -168,6 +169,7 @@ class Trainer:
                 "precision": [],
                 "recall": [],
                 "f1": [],
+                "per_class_iou": [],
             }
         }
 
@@ -436,6 +438,10 @@ class Trainer:
                     val_metrics["mean_f1"]
                 )
 
+                self.history["val"]["per_class_iou"].append(
+                    val_metrics["per_class_iou"]   
+                )
+
                 self._save_history()
 
                 # Log all scalars + per-class
@@ -451,16 +457,33 @@ class Trainer:
 
             # ── Checkpoint ─────────────────────────────────────────────
             if val_metrics:
+                """
+                metrics_to_save = {
+                    k: v for k, v in val_metrics.items()
+                    if k not in ("confusion_matrix", "per_class_iou", "per_class_precision",
+                                "per_class_recall", "per_class_f1", "per_class_support",
+                                "per_class_boundary_iou", "per_class_boundary_fscore")
+                }
+                """
+                metrics_to_save = {
+                    "mIoU"           : val_metrics["mIoU"],
+                    "val_loss"       : val_metrics["val_loss"],
+                    "train_loss"     : val_metrics["train_loss"],
+                    "fw_iou"         : val_metrics["fw_iou"],
+                    "mean_pixel_acc" : val_metrics["mean_pixel_acc"],
+                }
+
                 save_checkpoint(
                     model          = self.model,
                     optimizer      = self.optimizer,
                     scheduler      = self.scheduler,
                     epoch          = epoch,
-                    metrics        = val_metrics,
+                    metrics        = metrics_to_save,   # ← stripped version
                     exp_id         = cfg.experiment_id,
                     checkpoint_dir = cfg.checkpoint.dir,
                     top_k          = cfg.checkpoint.save_top_k,
                 )
+                                
         # ── Early stopping ─────────────────────────────────────────
             if val_metrics:
                 current_miou = val_metrics["mIoU"]

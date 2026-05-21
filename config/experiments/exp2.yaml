@@ -1,19 +1,20 @@
 # config/experiments/exp2.yaml
 # ================================
-# Experiment 2: ResNet50 + SGD + Focal+Dice
+# Experiment 2: ResNet50 + SGD + Focal
+
 #
 # This follows the DeepLabV3+ paper exactly:
 #   - ResNet50 backbone with output_stride=16
 #   - SGD optimizer with poly learning rate decay
-#   - Focal + Dice
+#   - Focal
 
 #   - Auxiliary loss from intermediate decoder
 #
 # Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp2_resnet50_sgd_focal_dice"
-  description: "DeepLabV3+ ResNet50, SGD poly-lr, Focal + Dice"
+  id: "exp2_resnet50_sgd_focal"
+  description: "DeepLabV3+ ResNet50, SGD poly-lr, Focal "
 
 data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
@@ -33,7 +34,7 @@ model:
   use_jpu: false
 
 training:
-  epochs: 50
+  epochs: 12
   lr: 0.005
   lr_scheduler: "poly"
   momentum: 0.9
@@ -57,17 +58,18 @@ training:
     #aux_weight: 0.4
 
 loss:
-  type: "focal_dice"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
+  type: "focal"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal
+
   kwargs: 
     gamma: 2.0          # Focal focusing strength (standard)
-    dice_weight: 0.6    # Higher Dice weight for small datasets
+    #dice_weight: 0.6    # Higher Dice weight for small datasets
     aux_weight: 0.4
 
 tracking:
   mlflow:
     enabled: true
     tracking_uri: "outputs/mlruns"
-    experiment_name: "exp2_resnet50_sgd_ce"
+    experiment_name: "exp2_resnet50_sgd_focal"
   tensorboard:
     enabled: true
     log_dir: "outputs/tensorboard/exp2"

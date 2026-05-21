@@ -74,15 +74,15 @@ class SegmentationMetrics:
         self.boundary_gt[:]      = 0
 
     # ── Update (per batch) ─────────────────────────────────────────────
-
+    """
     def update(self, preds: torch.Tensor, targets: torch.Tensor):
-        """
+        '''
         Accumulate one batch.
 
         Args:
             preds   : (B, H, W) long tensor — argmax of logits
             targets : (B, H, W) long tensor — ground truth labels
-        """
+        '''
         preds_np   = preds.cpu().numpy()
         targets_np = targets.cpu().numpy()
 
@@ -104,6 +104,28 @@ class SegmentationMetrics:
             # ── boundary metrics ──────────────────────────────────────
             if self.compute_boundary:
                 self._update_boundary(pred, target)
+    """
+    def update(self, preds: torch.Tensor, targets: torch.Tensor):
+        preds_np   = preds.cpu().numpy()
+        targets_np = targets.cpu().numpy()
+
+        # Process entire batch at once instead of per-image loop
+        valid      = targets_np != self.ignore_index
+        p          = preds_np[valid].astype(np.int64)
+        t          = targets_np[valid].astype(np.int64)
+        in_range   = (p >= 0) & (p < self.num_classes) & \
+                    (t >= 0) & (t < self.num_classes)
+        p, t       = p[in_range], t[in_range]
+
+        hist = np.bincount(
+            self.num_classes * t + p,
+            minlength=self.num_classes ** 2,
+        ).reshape(self.num_classes, self.num_classes)
+        self.confusion_matrix += hist
+
+        if self.compute_boundary:
+            for pred_img, target_img in zip(preds_np, targets_np):
+                self._update_boundary(pred_img, target_img)
 
     # ── Boundary helpers ───────────────────────────────────────────────
 
@@ -259,7 +281,7 @@ class SegmentationMetrics:
             "per_class_boundary_fscore": per_class_bfscore.tolist(),
 
             # ── Confusion matrix (for visualization) ───────────────────
-            "confusion_matrix"         : self.confusion_matrix.tolist(),
+            #"confusion_matrix"         : self.confusion_matrix.tolist(),
         }
 
     # ── Pretty print ───────────────────────────────────────────────────

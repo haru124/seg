@@ -66,7 +66,7 @@ def save_checkpoint(
 
     torch.save(state, fpath)
     print(f"[Checkpoint] Saved → {fpath}")
-
+    """
     try:
         # Verify the saved checkpoint is loadable
         _ = torch.load(fpath, map_location="cpu")
@@ -74,7 +74,7 @@ def save_checkpoint(
         print(f"[Checkpoint] ERROR: Saved checkpoint corrupted - {e}")
         fpath.unlink()  # delete corrupted file
         return None
-
+    """
     # ── Keep only top_k checkpoints ranked by mIoU ──
     all_ckpts = sorted(
         ckpt_dir.glob(f"{exp_id}_epoch*.pth"),
