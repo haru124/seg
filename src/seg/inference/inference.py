@@ -186,19 +186,6 @@ def save_metrics_plots(result, cfg):
         title="Test Loss",
     )
 
-    # =========================================================
-    # 4. Confusion Matrix (if available)
-    # =========================================================
-    if "confusion_matrix" in result:
-
-        cm_plot_path = plot_dir / "test_confusion_matrix.png"
-
-        save_confusion_matrix(
-            result["confusion_matrix"],
-            str(cm_plot_path),
-            class_names=CITYSCAPES_CLASSES,
-            normalize=True,
-        )
 
     print(f"[Plots] Saved to {plot_dir}")
 
