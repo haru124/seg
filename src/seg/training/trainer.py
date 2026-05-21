@@ -112,7 +112,7 @@ class Trainer:
 
         self.logger = setup_logger(
             "trainer",
-            log_dir=str(Path(cfg.checkpoint.dir).parent / "logs"),
+            log_dir=str(Path(cfg.checkpoint.dir).parent.parent / "logs" / cfg.experiment_id),
             exp_id=cfg.experiment_id,
         )
 
@@ -174,7 +174,7 @@ class Trainer:
         }
 
         self.history_path = (
-            Path(cfg.checkpoint.dir).parent
+            Path(cfg.checkpoint.dir)
             / "training_history.json"
         )
 
