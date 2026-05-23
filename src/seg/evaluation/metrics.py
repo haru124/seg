@@ -8,7 +8,7 @@ Metrics computed:
     fw_iou             — frequency-weighted IoU
     mean_pixel_acc     — overall pixel accuracy
     weighted_pixel_acc — class-frequency-weighted pixel accuracy
-    mean_class_acc     — mean per-class recall
+    mean_class_acc     — mean per-class  ??   
     mean_precision     — mean per-class precision
     mean_recall        — mean per-class recall
     mean_f1            — mean per-class F1 score
@@ -110,17 +110,18 @@ class SegmentationMetrics:
         targets_np = targets.cpu().numpy()
 
         # Process entire batch at once instead of per-image loop
-        valid      = targets_np != self.ignore_index
-        p          = preds_np[valid].astype(np.int64)
-        t          = targets_np[valid].astype(np.int64)
+        valid      = targets_np != self.ignore_index     #---- mask of true and false same size as targets_np
+        p          = preds_np[valid].astype(np.int64)    #---- flattered numpy array only where valid mask is true in pred_np
+        t          = targets_np[valid].astype(np.int64)  ### Boolean indexing: selects only True elements & FLATTENS result into 1D vector
         in_range   = (p >= 0) & (p < self.num_classes) & \
-                    (t >= 0) & (t < self.num_classes)
-        p, t       = p[in_range], t[in_range]
+                    (t >= 0) & (t < self.num_classes)         ##mask of true and false for each condition same size as p & t (p < 19) -- [ True, True, True, False, True ]
+                                                             #### four true-false mask combined together using elementwise &
+        p, t       = p[in_range], t[in_range]     
 
-        hist = np.bincount(
-            self.num_classes * t + p,
+        hist = np.bincount(                         ###Each (true,pred) pair gets unique ID -- 
+            self.num_classes * t + p,              # if t=0(row) and for every value of p 0 to 18 --- 19 columns, t = 1 --> 19 to 37
             minlength=self.num_classes ** 2,
-        ).reshape(self.num_classes, self.num_classes)
+        ).reshape(self.num_classes, self.num_classes)   ## (361,) --> (19,19)
         self.confusion_matrix += hist
 
         if self.compute_boundary:
@@ -132,7 +133,8 @@ class SegmentationMetrics:
     @staticmethod
     def _get_boundary(mask: np.ndarray, dilation: int) -> np.ndarray:
         """
-        Return boolean array True at boundary pixels of a binary mask.
+        Input -- boolean mask and integer
+        Return boolean array True at boundary pixels of one class of a binary mask.
         Boundary = pixels that change class within `dilation` pixels.
         """
         struct  = np.ones((2 * dilation + 1, 2 * dilation + 1), dtype=bool)
@@ -142,16 +144,16 @@ class SegmentationMetrics:
     def _update_boundary(self, pred: np.ndarray, target: np.ndarray):
         """Accumulate boundary TP/pred/gt counts per class."""
         d           = self.boundary_dilation
-        ignore_mask = (target == self.ignore_index)
+        ignore_mask = (target == self.ignore_index)   ## boolean mask
 
         for c in range(self.num_classes):
-            gt_c   = (target == c)
-            pred_c = (pred == c)
+            gt_c   = (target == c)   ##gt_c -- boolean mask per class
+            pred_c = (pred == c)    ##pred_c -- boolean mask per class
 
             if gt_c.sum() == 0:
                 continue
 
-            gt_boundary   = self._get_boundary(gt_c, d)   & ~ignore_mask
+            gt_boundary   = self._get_boundary(gt_c, d)   & ~ignore_mask   ##gt_c -- boolean mask
             pred_boundary = self._get_boundary(pred_c, d) & ~ignore_mask
 
             self.boundary_tp[c]   += (gt_boundary & pred_boundary).sum()
@@ -176,17 +178,22 @@ class SegmentationMetrics:
 
             # ── Standard metrics from confusion matrix ─────────────────
 
-            tp    = np.diag(hist)                   # (C,) true positives per class
-            fp    = hist.sum(axis=0) - tp           # false positives per class
+            tp    = np.diag(hist)                   # (19,) true positives per class
+            fp    = hist.sum(axis=0) - tp           # false positives per class -- squeeze row -- so sum of all rows in every column
             fn    = hist.sum(axis=1) - tp           # false negatives per class
 
             # IoU per class: TP / (TP + FP + FN)
-            denom         = tp + fp + fn
+            denom         = tp + fp + fn    ## (19, )
             per_class_iou = np.where(denom > 0, tp / denom, np.nan)
+
+            #np.where(condition, value_if_true, value_if_false)
+
             miou          = float(np.nanmean(per_class_iou))
 
             # Frequency-weighted IoU
-            freq   = hist.sum(axis=1) / hist.sum()
+            freq   = hist.sum(axis=1) / hist.sum()   
+            # hist.sum(axis=1) - squeeze columns -- 19 rows 1 column -- each row --> false negatives of each class+ tp -->i.e., total gt of each class 
+            # hist.sum() means sum of all entries in the matrix → total number of samples/pixels considered across all classes.
             valid  = freq > 0
             fw_iou = float((freq[valid] * per_class_iou[valid]).sum())
 
@@ -199,7 +206,7 @@ class SegmentationMetrics:
             gt_per_class   = hist.sum(axis=1)
             per_class_recall = np.where(gt_per_class > 0,
                                         tp / gt_per_class, np.nan)
-            mean_class_acc   = float(np.nanmean(per_class_recall))
+            mean_class_recall   = float(np.nanmean(per_class_recall))  #same as mean_recall
 
             # Per-class precision = TP / (TP + FP) = TP / predicted_pixels
             pred_per_class     = hist.sum(axis=0)
@@ -218,8 +225,8 @@ class SegmentationMetrics:
 
             # Class-frequency weighted pixel accuracy
             class_weights      = gt_per_class / hist.sum()
-            cls_acc            = per_class_recall   # same as per-class recall
-            weighted_pixel_acc = float(np.nansum(class_weights * cls_acc))
+            cls_recall           = per_class_recall   # same as per-class recall
+            freq_weighted_recall = float(np.nansum(class_weights * cls_recall))
 
             # ── Boundary metrics ───────────────────────────────────────
             boundary_iou    = 0.0
@@ -259,8 +266,8 @@ class SegmentationMetrics:
             # ── Pixel-level metrics ────────────────────────────────────
             "fw_iou"                   : fw_iou,
             "mean_pixel_acc"           : mean_pixel_acc,
-            "weighted_pixel_acc"       : weighted_pixel_acc,
-            "mean_class_acc"           : mean_class_acc,
+            "freq_weighted_recall"       : freq_weighted_recall,
+            
 
             # ── Precision / Recall / F1 ────────────────────────────────
             "mean_precision"           : mean_precision,
@@ -295,8 +302,8 @@ class SegmentationMetrics:
             f"  mIoU               : {r['mIoU']:.4f}",
             f"  fw_iou             : {r['fw_iou']:.4f}",
             f"  mean_pixel_acc     : {r['mean_pixel_acc']:.4f}",
-            f"  weighted_pixel_acc : {r['weighted_pixel_acc']:.4f}",
-            f"  mean_class_acc     : {r['mean_class_acc']:.4f}",
+            f"  freq_weighted_recall : {r['freq_weighted_recall']:.4f}",
+            
             f"  mean_precision     : {r['mean_precision']:.4f}",
             f"  mean_recall        : {r['mean_recall']:.4f}",
             f"  mean_f1            : {r['mean_f1']:.4f}",

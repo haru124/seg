@@ -158,7 +158,7 @@ class FocalLoss(nn.Module):
         # Compute focal weight: (1 - p_correct)^gamma
         log_p          = F.log_softmax(pred_flat, dim=1)
         p              = torch.exp(log_p)
-        p_correct      = p[torch.arange(len(target_flat)), target_flat]
+        p_correct      = p[torch.arange(len(target_flat)), target_flat]  ###p[[0,1,2], [1,0,2]] means: take p[0][1] take p[1][0] take p[2][2]
         log_p_correct  = log_p[torch.arange(len(target_flat)), target_flat]
         focal_weight   = (1.0 - p_correct) ** self.gamma
 
@@ -245,7 +245,8 @@ class DiceLoss(nn.Module):
 
     def _dice(self, pred, target):
         N, C, H, W        = pred.shape
-        prob              = F.softmax(pred, dim=1)               # (N, C, H, W)
+        prob              = F.softmax(pred, dim=1)               # (N, C, H, W)  
+        #apply softmax across the CLASS dimension (C) NOT across height or width
         one_hot, mask     = _to_one_hot(target, C, self.ignore_index)
         prob              = prob * mask                           # zero ignored pixels
 

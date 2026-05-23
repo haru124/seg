@@ -1,20 +1,18 @@
 # config/experiments/exp3.yaml
 # ================================
-# Experiment 3: ResNet50 + Adamw + Focal Dice
+# Experiment 3: ResNet50 + Adamw + Focal 
 #
 # This follows the DeepLabV3+ paper exactly:
 #   - ResNet50 backbone with output_stride=16
 #   - Adamw optimizer with poly learning rate decay
-#   - Focal Dice 
-
+#   - Focal
 #   - Auxiliary loss from intermediate decoder
 #
 # Expected mIoU on Cityscapes val: ~79%
 
 experiment:
-  id: "exp3_adamw_focal_dice"
-  description: "DeepLabV3+ ResNet50, AdamW poly-lr, focal dice"
-
+  id: "exp3_adamw_focal"
+  description: "DeepLabV3+ ResNet50, AdamW poly-lr, focal"
 data:
   image_size: [512, 1024]      # [H, W] — safe for 4 GB VRAM
   batch_size: 4
@@ -33,7 +31,7 @@ model:
   use_jpu: false
 
 training:
-  epochs: 50
+  epochs: 30
   lr: 0.0001
   lr_scheduler: "poly"
   #momentum: 0.9
@@ -57,17 +55,17 @@ training:
     #aux_weight: 0.4
 
 loss:
-  type: "focal_dice"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
+  type: "focal"                    # cross_entropy | focal | ohem | ce_dice | lovasz_ce | focal_dice
   kwargs: 
     gamma: 2.0          # Focal focusing strength (standard)
-    dice_weight: 0.6    # Higher Dice weight for small datasets
+    #dice_weight: 0.6    # Higher Dice weight for small datasets
     aux_weight: 0.4
 
 tracking:
   mlflow:
     enabled: true
     tracking_uri: "outputs/mlruns"
-    experiment_name: "exp3_resnet50_adamw_focal_dice"
+    experiment_name: "exp3_resnet50_adamw_focal"
   tensorboard:
     enabled: true
     log_dir: "outputs/tensorboard/exp3"
@@ -75,5 +73,5 @@ tracking:
 checkpoint:
   dir: "outputs/checkpoints/exp3"
   save_top_k: 3
-  resume: "outputs/checkpoints/exp3/exp3_adamw_focal_dice_epoch009_loss0.5672_mIoU0.4433.pth"
+  resume: null # "outputs/checkpoints/exp3/exp3_adamw_focal_dice_epoch010_loss0.5042_mIoU0.4855.pth"
   #resume: "outputs/checkpoints/exp01/exp01_resnet50_os16_epoch023_loss1.234_mIoU0.456.pth"

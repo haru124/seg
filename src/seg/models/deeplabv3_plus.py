@@ -49,7 +49,8 @@ class _ASPPPooling(nn.Module):
     def __init__(self, in_channels, out_channels, norm_layer=nn.BatchNorm2d):
         super().__init__()
         self.block = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
+            nn.AdaptiveAvgPool2d(1),   #for each channel - (h,w)-avg pooled to single value
+            ##(4,256,64,64)→(4,256,1,1)
             nn.Conv2d(in_channels, out_channels, 1, bias=False),
             norm_layer(out_channels),
             nn.ReLU(inplace=True),
@@ -57,8 +58,14 @@ class _ASPPPooling(nn.Module):
 
     def forward(self, x):
         size = x.shape[-2:]
+        #x.shape[-2:] means: take last 2 dimensions --> (64,64)
         return F.interpolate(self.block(x), size=size,
                              mode="bilinear", align_corners=False)
+    
+    """
+    (4,128,1,1) -- (1,1) We upsample to: (64,64)
+    So output becomes: (4,128,64,64)
+    """
 
 
 class ASPP(nn.Module):
@@ -82,8 +89,8 @@ class ASPP(nn.Module):
         )
 
     def forward(self, x):
-        feats = [self.b0(x), self.b1(x), self.b2(x), self.b3(x), self.b4(x)]
-        return self.project(torch.cat(feats, dim=1))
+        feats = [self.b0(x), self.b1(x), self.b2(x), self.b3(x), self.b4(x)] #256 channels each 
+        return self.project(torch.cat(feats, dim=1))   #after cat-- 256x5 inchannels 
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -113,7 +120,7 @@ class _DeepLabHead(nn.Module):
 # ══════════════════════════════════════════════════════════════════════
 # Auxiliary head
 # ══════════════════════════════════════════════════════════════════════
-
+#predicts mask with c3 from resnet
 class _AuxHead(nn.Module):
     def __init__(self, in_channels, num_classes, norm_layer=nn.BatchNorm2d):
         super().__init__()
@@ -146,7 +153,7 @@ def _apply_dilation_to_layer(layer, stride, dilation):
         dilation: dilation rate for all 3x3 convs in this layer
     """
     for i, block in enumerate(layer):
-        # Fix the downsampling shortcut in the FIRST block only
+        # Fix the downsampling shortcut in the FIRST block only  -- because mostly downsampling happens in first block
         if i == 0 and block.downsample is not None:
             # Change stride in the 1x1 downsample conv
             block.downsample[0].stride = (stride, stride)

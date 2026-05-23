@@ -34,7 +34,7 @@ model:
   use_jpu: false
 
 training:
-  epochs: 12
+  epochs: 30
   lr: 0.005
   lr_scheduler: "poly"
   momentum: 0.9
@@ -77,6 +77,6 @@ tracking:
 checkpoint:
   dir: "outputs/checkpoints/exp2"
   save_top_k: 3
-  resume: null
+  resume: null #"outputs/checkpoints/exp2/exp2_resnet50_sgd_focal_epoch012_loss0.2634_mIoU0.3982.pth"
   #"outputs/checkpoints/exp2/exp2_resnet50_sgd_focal_dice_epoch023_loss0.4186_mIoU0.4266.pth"
   
