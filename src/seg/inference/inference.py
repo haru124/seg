@@ -160,11 +160,14 @@ def save_metrics_plots(result, cfg):
     # =========================================================
     metrics_to_plot = {
         "mIoU": float(result["mIoU"]),
-        "FWIoU": float(result["fw_iou"]),
+        #"FWIoU": float(result["fw_iou"]),
         "Pixel Acc": float(result["mean_pixel_acc"]),
-        "Class Acc": float(result["mean_class_acc"]),
-        "Boundary IoU": float(result["boundary_iou"]),
-        "Boundary F1": float(result["boundary_fscore"]),
+        "Precision": float(result["mean_precision"]),
+        "Recall": float(result["mean_recall"]),
+        "F1": float(result["mean_f1"]),
+        #"Class Acc": float(result["mean_class_acc"]),
+        #"Boundary IoU": float(result["boundary_iou"]),
+        #"Boundary F1": float(result["boundary_fscore"]),
     }
 
     metrics_plot_path = plot_dir / "test_metrics_summary.png"
@@ -207,11 +210,14 @@ def log_results(result, cfg):
             test_metrics = {
                 "test_loss": float(result["test_loss"]),
                 "test_mIoU": float(result["mIoU"]),
-                "test_fw_iou": float(result["fw_iou"]),
+                #"test_fw_iou": float(result["fw_iou"]),
                 "test_pixel_acc": float(result["mean_pixel_acc"]),
-                "test_class_acc": float(result["mean_class_acc"]),
-                "test_boundary_iou": float(result["boundary_iou"]),
-                "test_boundary_fscore": float(result["boundary_fscore"]),
+                "test_precision": float(result["mean_precision"]),
+                "test_recall": float(result["mean_recall"]),
+                "test_f1": float(result["mean_f1"]),
+                #"test_class_acc": float(result["mean_class_acc"]),
+                #"test_boundary_iou": float(result["boundary_iou"]),
+                #"test_boundary_fscore": float(result["boundary_fscore"]),
             }
             mlf.log_metrics(test_metrics, step=0)
 
@@ -235,11 +241,14 @@ def log_results(result, cfg):
             test_metrics = {
                 "loss": result["test_loss"],
                 "mIoU": result["mIoU"],
-                "fw_iou": result["fw_iou"],
+                #"fw_iou": result["fw_iou"],
                 "pixel_acc": result["mean_pixel_acc"],
-                "class_acc": result["mean_class_acc"],
-                "boundary_iou": result["boundary_iou"],
-                "boundary_fscore": result["boundary_fscore"],
+                "test_precision": float(result["mean_precision"]),
+                "test_recall": float(result["mean_recall"]),
+                "test_f1": float(result["mean_f1"]),
+                #"class_acc": result["mean_class_acc"],
+                #"boundary_iou": result["boundary_iou"],
+                #"boundary_fscore": result["boundary_fscore"],
             }
             tb.log_scalars(test_metrics, step=0, prefix="Test")
             # Log per-class IoU
@@ -274,7 +283,8 @@ def main(args):
 
     # ── Load best checkpoint ──
     ckpt_dir = Path(cfg.checkpoint.dir)
-    ckpts = sorted(ckpt_dir.glob(f"{cfg.experiment_id}_epoch*.pth"),
+    #exp_stem = cfg.experiment_id.split("_")[0]
+    ckpts = sorted(ckpt_dir.rglob(f"{cfg.experiment_id}_epoch*.pth"),
                    key=lambda p: float(p.stem.split("mIoU")[-1]), reverse=True)
 
     if not ckpts:
@@ -308,11 +318,23 @@ def main(args):
     print(f"{'='*70}")
     print(f"  Loss               : {result['test_loss']:.4f}")
     print(f"  mIoU               : {result['mIoU']:.4f}")
-    print(f"  Frequency-weighted IoU : {result['fw_iou']:.4f}")
+    #print(f"  Frequency-weighted IoU : {result['fw_iou']:.4f}")
     print(f"  Mean Pixel Accuracy: {result['mean_pixel_acc']:.4f}")
-    print(f"  Mean Class Accuracy: {result['mean_class_acc']:.4f}")
-    print(f"  Boundary IoU       : {result['boundary_iou']:.4f}")
-    print(f"  Boundary F-Score   : {result['boundary_fscore']:.4f}")
+    print(f"Precision: {result['mean_precision']:.4f}"),
+    print(f"Recall: {result['mean_recall']:.4f}"),
+    print(f"f1: {result['mean_f1']:.4f}"),
+    #print(f"  Mean Class Accuracy: {result['mean_class_acc']:.4f}")
+    #print(f"  Boundary IoU       : {result['boundary_iou']:.4f}")
+    #print(f"  Boundary F-Score   : {result['boundary_fscore']:.4f}")
+    per_class_iou = result["per_class_iou"]
+
+    print("\nPer-Class IoU:")
+    for cls_name, iou in zip(CITYSCAPES_CLASSES, per_class_iou):
+        if np.isnan(iou):
+            print(f"  {cls_name:<20}: N/A")
+        else:
+            print(f"  {cls_name:<20}: {iou:.4f}")
+
     print(f"{'='*70}\n")
 
     # ── Save visualizations ──
