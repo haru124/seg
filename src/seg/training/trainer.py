@@ -19,6 +19,8 @@ from tqdm import tqdm
 from pathlib import Path
 import numpy as np
 import json
+from datetime import datetime
+
 
 from src.seg.evaluation.metrics import SegmentationMetrics, CITYSCAPES_CLASSES
 from src.seg.utils.checkpoint import save_checkpoint, load_checkpoint
@@ -101,6 +103,7 @@ class Trainer:
         self.val_loader   = val_loader
         self.cfg          = cfg
         self.device       = device
+        self.run_timestamp = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
 
         self.scaler = GradScaler(enabled=cfg.training.amp)
 
@@ -112,7 +115,7 @@ class Trainer:
 
         self.logger = setup_logger(
             "trainer",
-            log_dir=str(Path(cfg.checkpoint.dir).parent.parent / "logs" / cfg.experiment_id),
+            log_dir=str(Path(cfg.checkpoint.dir).parent / "logs" / cfg.experiment_id)  #"outputs/checkpoints".parent = outputs 
             exp_id=cfg.experiment_id,
         )
 
@@ -157,6 +160,7 @@ class Trainer:
         # ── Training history ──────────────────────────────────────
         self.history = {
             "experiment_id": cfg.experiment_id,
+            "run_timestamp": self.run_timestamp,
             "train": {
                 "epoch": [],
                 "loss": [],
@@ -173,10 +177,20 @@ class Trainer:
             }
         }
 
-        self.history_path = (
-            Path(cfg.checkpoint.dir)
-            / "training_history.json"
+    
+        # exp1_resnet_sgd_focal → exp1
+        exp_stem = cfg.experiment_id.split("_")[0]
+
+        # outputs/history/exp1/20260524_142355/
+        self.history_dir = (
+            Path(cfg.checkpoint.dir).parent
+            / "history"
+            / exp_stem
         )
+
+        self.history_dir.mkdir(parents=True, exist_ok=True)
+
+        self.history_path = self.history_dir / f"{cfg.experiment_id}_{self.run_timestamp}_training_history.json"
 
 
     # ── Train one epoch ────────────────────────────────────────────────
