@@ -115,7 +115,7 @@ class Trainer:
 
         self.logger = setup_logger(
             "trainer",
-            log_dir=str(Path(cfg.checkpoint.dir).parent / "logs" / cfg.experiment_id)  #"outputs/checkpoints".parent = outputs 
+            log_dir=str(Path(cfg.checkpoint.dir).parent / "logs" / cfg.experiment_id),    #"outputs/checkpoints".parent = outputs 
             exp_id=cfg.experiment_id,
         )
 
