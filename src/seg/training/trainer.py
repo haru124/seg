@@ -414,11 +414,13 @@ class Trainer:
 
             # ── Train ──────────────────────────────────────────────────
             train_loss, train_time = self._train_epoch(epoch)
+            torch.cuda.empty_cache()    # free up memory after train epoch before validation
 
             # ── Validate ───────────────────────────────────────────────
             val_metrics = {}
             if epoch % eval_interval == 0:
                 val_metrics                = self._val_epoch(epoch)
+                torch.cuda.empty_cache()    # free up memory after val epoch before logging/checkpointing
                 val_metrics["train_loss"] = train_loss
 
                 val_metrics["train_time"] = train_time
