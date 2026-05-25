@@ -1,0 +1,1698 @@
+Create TWO separate high-quality academic architecture flowcharts side-by-side or as separate figures:
+
+
+
+1. Semantic Segmentation Architecture (with Auxiliary Head)
+
+2. Object Detection Architecture (Faster R-CNN + FPN)
+
+Style requirements (VERY IMPORTANT):
+
+
+
+* NO overlapping blocks
+
+* NO overlapping arrows
+
+* NO text overflowing outside blocks
+
+* Keep arrows clearly visible with enough spacing between blocks
+
+* Tensor shapes must be smaller font than block titles (around 2–4 sizes smaller)
+
+* If tensor shapes are long, place them BELOW the block instead of inside
+
+* Use bigger blocks where needed
+
+* Break long texts into 2 lines if required
+
+* Maintain a clean top-to-bottom flow
+
+* Use very soft pastel colors only:
+
+   * light yellow
+
+   * light purple
+
+   * light pink
+
+   * light blue
+
+   * light green
+
+   * light peach
+
+   * light gray
+
+* Use thin clean arrows with proper spacing
+
+* Modern research-paper / conference presentation style
+
+* White background
+
+* Rounded rectangles
+
+* Consistent typography
+
+* Ensure screenshot-ready quality for PPT
+
+* Make all tensor shapes clearly readable
+
+* Ensure arrows never collide with text
+
+* Use subtle shadows and neat alignment
+
+
+
+LAYOUT REQUIREMENTS
+
+
+
+* Keep large spacing between stages
+
+* Make tensor shapes smaller and lighter than titles
+
+* Ensure all text remains INSIDE blocks
+
+* Do not allow arrows to overlap tensor text
+
+* Prefer vertical architecture flow
+
+* Keep branches clearly separated
+
+* Ensure auxiliary head branch is visually distinct
+
+* Ensure detection cls/reg branches are visually distinct
+
+* Make it publication-quality and PPT-ready
+
+* 16:9 layout preferred --- I want to place this in ppt slide -- landscape A4 sheet sized
+
+* Ultra clean diagram aesthetics
+
+* High readability at screenshot scale
+
+
+
+Add note near auxiliary head:“Used only during training for deep supervision”
+
+
+
+I need 2 separate diagrams - for 2 separate ppts and papers. Even if aspect ratio is little longer along height - no problem - but try to keep atleast like square
+
+
+
+GeneralizedRCNNTransform
+
+Preprocesses images before entering the network. Normalises pixels using ImageNet mean/std, resizes shorter edge to min_size=800 capped at max_size=1333 (retaining aspect ratio). Batches variable-size images into an ImageList. Output: tensors [B, 3, H', W'] + image_sizes list. Also post-processes detections back to original image scale at inference.
+
+AnchorGenerator
+
+Generates a fixed grid of anchors at every spatial location for each FPN level. Sizes: (32,), (64,), (128,), (256,), (512,) per level × aspect_ratios: (0.5, 1.0, 2.0) → 3 anchors / location / level. Example: P3 at 200×100 → 200×100×3 = 60,000 anchors from that level alone. Total across 5 FPN levels for a typical image: ~250,000–300,000 anchors.
+
+RPNHead
+
+Lightweight conv head shared across all FPN levels.
+
+3×3 conv → two sibling 1×1 convs:
+
+  cls_logits:  [B, A, H, W]  — objectness per anchor
+
+  bbox_pred:  [B, 4A, H, W]  — (dx, dy, dw, dh) deltas
+
+A = anchors per location (= 3 here)
+
+Followed by NMS → top-K proposals.
+
+RegionProposalNetwork
+
+Orchestrates AnchorGenerator + RPNHead + NMS + sampling.
+
+Training: samples 256 anchors (pos:neg 1:1), computes:
+
+  • RPN cls loss: Binary Cross Entropy on objectness
+
+  • RPN reg loss: Smooth-L1 on matched anchor deltas
+
+Inference: NMS thresh 0.7, returns top-2000 (train) / top-1000 (test) proposals for RoI head.
+
+MultiScaleRoIAlign
+
+Routes each proposal to the correct FPN level using: k = k0 + ⌊log2(√(w·h) / 224)⌋  where k0=4. Performs bilinear-interpolated RoI Align at output_size=7×7 — no quantisation errors (unlike RoI Pooling). Input: FPN feature dict + proposal list. Output: [N_proposals, 256, 7, 7]. Example: 1000 proposals × batch 4 → N=4000 RoI features pooled per forward pass.
+
+TwoMLPHead  (Detection Representation Head)
+
+Simple two-FC-layer network that produces a shared representation for classification and regression.
+
+  Step 1: Flatten pooled features  [N, 256, 7, 7] → [N, 12544]   (12544 = 256×7×7)
+
+  Step 2: Linear(12544, 1024) → ReLU
+
+  Step 3: Linear(1024,  1024) → ReLU
+
+  Output: [N, 1024]  — shared representation fed to both predictor heads.
+
+FastRCNNPredictor  (Classification + Regression)
+
+Two parallel linear layers on TwoMLPHead output:
+
+  cls_score:  Linear(1024, C+1)  → [N, 9]   — logits for 8 classes + background
+
+  bbox_pred:  Linear(1024, 4×C)  → [N, 32]  — one set of (dx,dy,dw,dh) per class
+
+Inference: softmax(cls_score) → top scores → decode deltas → per-class NMS → final detections.
+
+
+
+"""
+src/seg/models/deeplabv3_plus.py
+---------------------------------
+DeepLabV3+ for semantic segmentation.
+
+Backbones supported:
+    resnet18 / resnet34 / resnet50 / resnet101  (via torchvision)
+    mobilenet_v2                                (via torchvision)
+
+output_stride controls backbone dilation:
+    output_stride=32 : no dilation  (standard ResNet, fastest, lowest memory)
+    output_stride=16 : layer4 dilated  (default, good balance)
+    output_stride=8  : layer3+4 dilated  (best quality, most memory)
+
+Architecture (original DeepLabV3+):
+    backbone (with dilation) → C1 (stride 4) + C4 (stride 8 or 16)
+    → ASPP → Decoder (upsample + concat C1 + refine) → output
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from pathlib import Path
+
+from src.seg.models.nn.basic import _ConvBNReLU
+from src.seg.models.nn.jpu import JPU
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ASPP
+# ══════════════════════════════════════════════════════════════════════
+
+class _ASPPConv(nn.Module):
+    def __init__(self, in_channels, out_channels, dilation,
+                 norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3,
+                      padding=dilation, dilation=dilation, bias=False),
+            norm_layer(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class _ASPPPooling(nn.Module):
+    def __init__(self, in_channels, out_channels, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),   #for each channel - (h,w)-avg pooled to single value
+            ##(4,256,64,64)→(4,256,1,1)
+            nn.Conv2d(in_channels, out_channels, 1, bias=False),
+            norm_layer(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        size = x.shape[-2:]
+        #x.shape[-2:] means: take last 2 dimensions --> (64,64)
+        return F.interpolate(self.block(x), size=size,
+                             mode="bilinear", align_corners=False)
+    
+    """
+    (4,128,1,1) -- (1,1) We upsample to: (64,64)
+    So output becomes: (4,128,64,64)
+    """
+
+
+class ASPP(nn.Module):
+    def __init__(self, in_channels, atrous_rates=(6, 12, 18),
+                 out_channels=256, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.b0 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 1, bias=False),
+            norm_layer(out_channels),
+            nn.ReLU(inplace=True),
+        )
+        self.b1 = _ASPPConv(in_channels, out_channels, atrous_rates[0], norm_layer)
+        self.b2 = _ASPPConv(in_channels, out_channels, atrous_rates[1], norm_layer)
+        self.b3 = _ASPPConv(in_channels, out_channels, atrous_rates[2], norm_layer)
+        self.b4 = _ASPPPooling(in_channels, out_channels, norm_layer)
+        self.project = nn.Sequential(
+            nn.Conv2d(5 * out_channels, out_channels, 1, bias=False),
+            norm_layer(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+        )
+
+    def forward(self, x):
+        feats = [self.b0(x), self.b1(x), self.b2(x), self.b3(x), self.b4(x)] #256 channels each 
+        return self.project(torch.cat(feats, dim=1))   #after cat-- 256x5 inchannels 
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Decoder
+# ══════════════════════════════════════════════════════════════════════
+
+class _DeepLabHead(nn.Module):
+    def __init__(self, num_classes, c1_channels=256, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.c1_reduce = _ConvBNReLU(c1_channels, 48, 1, norm_layer=norm_layer)
+        self.refine = nn.Sequential(
+            _ConvBNReLU(256 + 48, 256, 3, padding=1, norm_layer=norm_layer),
+            nn.Dropout(0.5),
+            _ConvBNReLU(256, 256, 3, padding=1, norm_layer=norm_layer),
+            nn.Dropout(0.1),
+            nn.Conv2d(256, num_classes, 1),
+        )
+
+    def forward(self, aspp_feat, c1_feat):
+        size = c1_feat.shape[-2:]
+        c1   = self.c1_reduce(c1_feat)
+        x    = F.interpolate(aspp_feat, size=size,
+                             mode="bilinear", align_corners=False)
+        return self.refine(torch.cat([x, c1], dim=1))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Auxiliary head
+# ══════════════════════════════════════════════════════════════════════
+#predicts mask with c3 from resnet
+class _AuxHead(nn.Module):
+    def __init__(self, in_channels, num_classes, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.block = nn.Sequential(
+            _ConvBNReLU(in_channels, 256, 3, padding=1, norm_layer=norm_layer),
+            nn.Dropout(0.1),
+            nn.Conv2d(256, num_classes, 1),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Dilation helper — applied AFTER loading pretrained weights
+# ══════════════════════════════════════════════════════════════════════
+
+def _apply_dilation_to_layer(layer, stride, dilation):
+    """
+    Patch a ResNet layer IN-PLACE to use dilation instead of striding.
+
+    This is applied AFTER loading pretrained weights so the weights
+    themselves don't change — only the stride/dilation/padding changes.
+    The 3x3 conv in each block gets dilation applied; the 1x1 convs
+    and downsample are unaffected (they don't have spatial extent).
+
+    Args:
+        layer   : resnet.layer3 or resnet.layer4
+        stride  : new stride for the first block (1 = no downsampling)
+        dilation: dilation rate for all 3x3 convs in this layer
+    """
+    for i, block in enumerate(layer):
+        # Fix the downsampling shortcut in the FIRST block only  -- because mostly downsampling happens in first block
+        if i == 0 and block.downsample is not None:
+            # Change stride in the 1x1 downsample conv
+            block.downsample[0].stride = (stride, stride)
+
+        # Fix every conv in the block
+        for m in block.modules():
+            if isinstance(m, nn.Conv2d):
+                if m.kernel_size == (3, 3):
+                    # This is the spatial conv — apply dilation
+                    if i == 0:
+                        m.stride  = (stride, stride)
+                    m.dilation = (dilation, dilation)
+                    m.padding  = (dilation, dilation)  # padding = dilation to preserve size
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DeepLabV3+
+# ══════════════════════════════════════════════════════════════════════
+
+class DeepLabV3Plus(nn.Module):
+    """
+    DeepLabV3+ with pretrained ResNet backbone and optional dilation.
+
+    output_stride controls the effective stride of the backbone output:
+        32 → no dilation (fastest, but coarse features)
+        16 → layer4 dilated with rate=2  (default, recommended)
+        8  → layer3 dilated rate=2, layer4 dilated rate=4  (best, more memory)
+
+    use_jpu: replace ASPP input with JPU-fused features (FastFCN style)
+             mutually exclusive with the standard dilated backbone path
+             but can be combined if needed
+    """
+    def __init__(
+        self,
+        num_classes: int,
+        backbone_name: str = "resnet50",
+        output_stride: int = 16,
+        aux: bool = True,
+        use_pretrained_backbone: bool = True,
+        norm_layer=nn.BatchNorm2d,
+        use_jpu: bool = False,
+        backbone_weights_path: str = None,
+    ):
+        super().__init__()
+        self.aux      = aux
+        self.use_jpu  = use_jpu
+
+        self.backbone, c1_ch, c3_ch, c4_ch = _build_backbone(
+            backbone_name, output_stride,
+            use_pretrained_backbone, norm_layer, backbone_weights_path,
+        )
+
+        # JPU fuses c1+c3+c4 into a richer feature map before ASPP
+        if use_jpu:
+            self.jpu = JPU(
+                in_channels=[c1_ch, c3_ch, c4_ch],
+                width=512,
+                norm_layer=norm_layer,
+            )
+            aspp_in = 512 * 4   # JPU outputs 4 dilated branches of 512ch each
+        else:
+            aspp_in = c4_ch     # standard path: ASPP takes C4 directly
+
+        # ASPP rates depend on output_stride
+        # output_stride=8  → rates (12, 24, 36) — larger rates for larger receptive field
+        # output_stride=16 → rates (6, 12, 18)
+        # output_stride=32 → rates (6, 12, 18)  — no backbone dilation, ASPP does the work
+        if output_stride == 8:
+            aspp_rates = (12, 24, 36)
+        else:
+            aspp_rates = (6, 12, 18)
+
+        self.aspp = ASPP(aspp_in, aspp_rates, out_channels=256,
+                         norm_layer=norm_layer)
+        self.head = _DeepLabHead(num_classes, c1_ch, norm_layer)
+
+        if aux:
+            self.aux_head = _AuxHead(c3_ch, num_classes, norm_layer)
+
+    def forward(self, x):
+        input_size   = x.shape[-2:]
+        c1, c3, c4   = self.backbone(x)
+
+        if self.use_jpu:
+            c1, c3, c4, jpu_out = self.jpu(c1, c3, c4)
+            aspp_out = self.aspp(jpu_out)
+        else:
+            aspp_out = self.aspp(c4)
+
+        out = self.head(aspp_out, c1)
+        out = F.interpolate(out, size=input_size,
+                            mode="bilinear", align_corners=False)
+        result = {"out": out}
+
+        if self.aux and self.training:
+            aux_out = self.aux_head(c3)
+            aux_out = F.interpolate(aux_out, size=input_size,
+                                    mode="bilinear", align_corners=False)
+            result["aux"] = aux_out
+
+        return result
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Backbone wrappers
+# ══════════════════════════════════════════════════════════════════════
+
+class _ResNetBackbone(nn.Module):
+    """
+    Wraps torchvision ResNet to expose (c1, c3, c4) feature maps.
+
+    C1 = layer1 output  (stride 4)   — low-level, used in decoder
+    C3 = layer3 output  (stride 8 or 16 depending on dilation)
+    C4 = layer4 output  (stride 8, 16, or 32 depending on dilation)
+    """
+    def __init__(self, resnet):
+        super().__init__()
+        self.stem   = nn.Sequential(resnet.conv1, resnet.bn1,
+                                    resnet.relu,  resnet.maxpool)
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
+
+    def forward(self, x):
+        x  = self.stem(x)
+        c1 = self.layer1(x)
+        x  = self.layer2(c1)
+        c3 = self.layer3(x)
+        c4 = self.layer4(c3)
+        return c1, c3, c4
+
+
+class _MobileNetV2Backbone(nn.Module):
+    """
+    Wraps torchvision MobileNetV2 to expose (c1, c3, c4).
+    No dilation support (MobileNetV2 is used as-is).
+    """
+    def __init__(self, mobilenet):
+        super().__init__()
+        f = mobilenet.features
+        self.stage1 = nn.Sequential(*f[:4])    # stride 4,  24ch  → c1
+        self.stage2 = nn.Sequential(*f[4:7])   # stride 8,  32ch
+        self.stage3 = nn.Sequential(*f[7:14])  # stride 16, 96ch  → c3
+        self.stage4 = nn.Sequential(*f[14:])   # stride 32, 1280ch → c4
+
+    def forward(self, x):
+        c1 = self.stage1(x)
+        x  = self.stage2(c1)
+        c3 = self.stage3(x)
+        c4 = self.stage4(c3)
+        return c1, c3, c4
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Backbone factory
+# ══════════════════════════════════════════════════════════════════════
+
+import torch.utils.model_zoo as model_zoo
+
+
+def _build_backbone(name, output_stride, use_pretrained_backbone, norm_layer,
+                    backbone_weights_path=None):
+
+    # ── ResNet family ──────────────────────────────────────────────────
+    if name in ("resnet18", "resnet34", "resnet50", "resnet101"):
+
+        from torchvision.models import (
+            resnet18  as tv_r18,
+            resnet34  as tv_r34,
+            resnet50  as tv_r50,
+            resnet101 as tv_r101,
+        )
+        _tv = {"resnet18": tv_r18, "resnet34": tv_r34,
+               "resnet50": tv_r50, "resnet101": tv_r101}
+
+        # Step 1: Build architecture with NO weights
+        base = _tv[name](weights=None)
+
+        # Step 2: Load pretrained weights BEFORE applying dilation
+        #         (weights are for standard stride=2 conv — load them first,
+        #          then change stride/dilation/padding in-place)
+        
+        if use_pretrained_backbone:
+
+            # ---------------------------------------------------------
+            # Case 1: local pretrained weights
+            # ---------------------------------------------------------
+            if (
+                backbone_weights_path is not None
+                and Path(backbone_weights_path).exists()
+            ):
+
+                print(f"[Backbone] Loading local weights: {backbone_weights_path}")
+
+                state_dict = torch.load(
+                    backbone_weights_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+
+                # checkpoint wrapper support
+                if "state_dict" in state_dict:
+                    state_dict = state_dict["state_dict"]
+
+                missing, unexpected = base.load_state_dict(
+                    state_dict,
+                    strict=False,
+                )
+
+                if missing:
+                    print(f"[Backbone] Missing keys ({len(missing)}): {missing[:3]} ...")
+
+                if unexpected:
+                    print(f"[Backbone] Unexpected keys ({len(unexpected)}): {unexpected[:3]} ...")
+
+            # ---------------------------------------------------------
+            # Case 2: download torchvision pretrained weights
+            # ---------------------------------------------------------
+            else:
+                from src.seg.models.backbones.resnet import model_urls
+                print(f"[Backbone] Downloading torchvision pretrained {name}")
+                state_dict = model_zoo.load_url(model_urls[name])
+                base.load_state_dict(state_dict)
+
+        # -------------------------------------------------------------
+        # Case 3: random initialization
+        # -------------------------------------------------------------
+        else:
+            print("[Backbone] Training backbone from scratch")
+        # Step 3: Apply dilation IN-PLACE AFTER weight loading
+        #
+        # output_stride=32: no dilation (standard ResNet)
+        #   layer3: stride=2 → H/16,  layer4: stride=2 → H/32
+        #
+        # output_stride=16: dilate layer4 only
+        #   layer3: stride=2 → H/16 (unchanged)
+        #   layer4: stride=1, dilation=2 → H/16 (same as layer3 output)
+        #
+        # output_stride=8: dilate layer3 AND layer4
+        #   layer3: stride=1, dilation=2 → H/8 (same as layer2 output)
+        #   layer4: stride=1, dilation=4 → H/8 (same spatial size)
+        #
+        # The weights themselves don't need to change — only stride/dilation/padding.
+        # This is the standard trick used in all DeepLab papers.
+
+        if output_stride == 16:
+            print("[Backbone] Applying dilation: layer4 (stride=1, dilation=2)")
+            _apply_dilation_to_layer(base.layer4, stride=1, dilation=2)
+
+        elif output_stride == 8:
+            print("[Backbone] Applying dilation: layer3 (dilation=2), layer4 (dilation=4)")
+            _apply_dilation_to_layer(base.layer3, stride=1, dilation=2)
+            _apply_dilation_to_layer(base.layer4, stride=1, dilation=4)
+
+        elif output_stride == 32:
+            print("[Backbone] No dilation (output_stride=32, standard ResNet)")
+            # No changes needed
+
+        else:
+            raise ValueError(f"output_stride must be 8, 16, or 32. Got {output_stride}")
+
+        backbone = _ResNetBackbone(base)
+
+        is_bottleneck = name in ("resnet50", "resnet101")
+        c1_ch = 256 if is_bottleneck else 64
+        c3_ch = 1024 if is_bottleneck else 128
+        c4_ch = 2048 if is_bottleneck else 512
+
+        return backbone, c1_ch, c3_ch, c4_ch
+
+    # ── MobileNetV2 ────────────────────────────────────────────────────
+    if name == "mobilenet_v2":
+        from torchvision.models import mobilenet_v2 as tv_mv2
+
+        base = tv_mv2(weights=None)
+        
+        if use_pretrained_backbone:
+
+            # ---------------------------------------------------------
+            # Case 1: local pretrained weights
+            # ---------------------------------------------------------
+            if (
+                backbone_weights_path is not None
+                and Path(backbone_weights_path).exists()
+            ):
+
+                print(f"[Backbone] Loading local weights: {backbone_weights_path}")
+
+                state_dict = torch.load(
+                    backbone_weights_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+
+                # checkpoint wrapper support
+                if "state_dict" in state_dict:
+                    state_dict = state_dict["state_dict"]
+
+                missing, unexpected = base.load_state_dict(
+                    state_dict,
+                    strict=False,
+                )
+
+                if missing:
+                    print(f"[Backbone] Missing keys ({len(missing)}): {missing[:3]} ...")
+
+                if unexpected:
+                    print(f"[Backbone] Unexpected keys ({len(unexpected)}): {unexpected[:3]} ...")
+
+            # ---------------------------------------------------------
+            # Case 2: download torchvision pretrained weights
+            # ---------------------------------------------------------
+            else:
+                from src.seg.models.backbones.resnet import model_urls
+
+                print(f"[Backbone] Downloading torchvision pretrained {name}")
+
+                state_dict = model_zoo.load_url(model_urls[name])
+
+                base.load_state_dict(state_dict)
+
+        # -------------------------------------------------------------
+        # Case 3: random initialization
+        # -------------------------------------------------------------
+        else:
+            print("[Backbone] Training backbone from scratch")
+
+        
+        backbone = _MobileNetV2Backbone(base)
+        return backbone, 24, 96, 1280
+
+    raise ValueError(
+        f"Unknown backbone '{name}'. "
+        "Supported: resnet18, resnet34, resnet50, resnet101, mobilenet_v2"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Public factory
+# ══════════════════════════════════════════════════════════════════════
+
+def get_segmentation_model(
+    num_classes: int = 19,
+    backbone: str = "resnet50",
+    output_stride: int = 16,
+    aux: bool = True,
+    use_pretrained_backbone: bool = True,
+    norm_layer=nn.BatchNorm2d,
+    use_jpu: bool = False,
+    backbone_weights_path: str = None,
+) -> DeepLabV3Plus:
+    return DeepLabV3Plus(
+        num_classes           = num_classes,
+        backbone_name         = backbone,
+        output_stride         = output_stride,
+        aux                   = aux,
+        use_pretrained_backbone       = use_pretrained_backbone,
+        norm_layer            = norm_layer,
+        use_jpu               = use_jpu,
+        backbone_weights_path = backbone_weights_path,
+    )
+
+
+
+
+models/detector.py
+
+Assembles complete Faster R-CNN from explicit torchvision components.
+
+Four weight strategies, two code paths:
+
+PATH 1 — _build_from_components()
+  Used for: "imagenet", "none", "local"+load_backbone_only=True
+  Steps:
+    a. backbone.py builds BackboneWithFPN with weights already loaded
+    b. All other components built here with random weights
+    c. FasterRCNN assembled from these components
+
+PATH 2 — _build_from_full_weights()
+  Used for: "coco", "local"+load_backbone_only=False
+  Steps:
+    a. Build full FasterRCNN architecture with random weights
+    b. Load full weight file into entire model (backbone+RPN+ROI heads)
+    c. Replace box predictor head for num_classes
+
+Tensor flow through the assembled model (eval mode):
+  Input: list of [3, H, W] float tensors (one per image, values in [0,1])
+      ↓
+  GeneralizedRCNNTransform
+      normalize: (pixel - mean) / std per channel
+      resize:    shortest side → [min_size, max_size], aspect ratio kept
+      batch:     zero-pad to same H'×W', return ImageList
+      Output: ImageList(.tensors=[B, 3, H', W'], .image_sizes=[(H,W),...])
+      ↓
+  BackboneWithFPN
+      ResNet body:
+        C2: [B, 256,  H'/4,  W'/4]
+        C3: [B, 512,  H'/8,  W'/8]
+        C4: [B, 1024, H'/16, W'/16]
+        C5: [B, 2048, H'/32, W'/32]
+      FPN top-down + lateral:
+        P2: [B, 256, H'/4,  W'/4]   stride 4
+        P3: [B, 256, H'/8,  W'/8]   stride 8
+        P4: [B, 256, H'/16, W'/16]  stride 16
+        P5: [B, 256, H'/32, W'/32]  stride 32
+        P6: [B, 256, H'/64, W'/64]  stride 64  (max-pool of P5)
+      Output: OrderedDict{"0":P2, "1":P3, "2":P4, "3":P5, "pool":P6}
+      ↓
+  RegionProposalNetwork
+      AnchorGenerator:
+        generates anchors at every spatial location on every FPN level
+        sizes (32,64,128,256,512) × aspect_ratios (0.5,1.0,2.0)
+        total anchors ≈ 200,000 per image
+      RPNHead (shared across all FPN levels):
+        input: each FPN level [B, 256, H_l, W_l]
+        objectness: [B, 3, H_l, W_l]  (1 score per anchor)
+        bbox_delta: [B, 12, H_l, W_l] (4 values per anchor)
+      Decode deltas → proposal boxes
+      NMS: pre_nms=2000 → post_nms=2000 (train), 1000/1000 (test)
+      Output: list of [N_proposals, 4] per image  (xyxy format)
+      ↓
+  RoIHeads
+      MultiScaleRoIAlign:
+        assigns each proposal to FPN level by box size
+        bilinear interpolation → fixed 7×7 grid per proposal
+        output: [total_proposals_in_batch, 256, 7, 7]
+      TwoMLPHead:
+        flatten: [total_proposals, 256×7×7=12544]
+        FC(12544→1024) + ReLU
+        FC(1024→1024)  + ReLU
+        output: [total_proposals, 1024]
+      FastRCNNPredictor:
+        cls_score: FC(1024→num_classes) → [total_proposals, num_classes]
+        bbox_pred: FC(1024→num_classes×4) → [total_proposals, num_classes×4]
+      decode + per-class NMS → final detections
+      Output: list of {"boxes":[K,4], "labels":[K], "scores":[K]} per image
+"""
+
+import torch
+from torchvision.models.detection import FasterRCNN
+from torchvision.models.detection import (
+    fasterrcnn_resnet50_fpn,
+    FasterRCNN_ResNet50_FPN_Weights,
+)
+from torchvision.models.detection.rpn import (
+    AnchorGenerator,
+    RPNHead,
+    RegionProposalNetwork,
+)
+from torchvision.models.detection.roi_heads import RoIHeads
+from torchvision.models.detection.transform import GeneralizedRCNNTransform
+from torchvision.models.detection.faster_rcnn import TwoMLPHead, FastRCNNPredictor
+from torchvision.ops import MultiScaleRoIAlign
+
+from objdet.entity.config_entity import ModelConfig
+from objdet.models.backbone import build_backbone
+
+
+# ===========================================================================
+# PUBLIC API
+# ===========================================================================
+
+def build_faster_rcnn(model_cfg: ModelConfig) -> FasterRCNN:
+    """
+    Entry point. Dispatches to the correct build path based on strategy.
+    """
+    strategy = model_cfg.backbone_weights.lower()
+    only_backbone = model_cfg.load_backbone_only
+
+    # PATH 1: backbone.py handles weight loading, components built here
+    if strategy in ("imagenet", "none") or (strategy == "local" and only_backbone):
+        return _build_from_components(model_cfg)
+
+    # PATH 2: full model weights loaded here, backbone.py not involved
+    if strategy == "coco" or (strategy == "local" and not only_backbone):
+        return _build_from_full_weights(model_cfg)
+
+    raise ValueError(
+        f"Unknown backbone_weights='{strategy}'. "
+        "Choose: 'imagenet' | 'coco' | 'local' | 'none'"
+    )
+
+
+def get_model_on_device(model_cfg: ModelConfig, device: torch.device) -> FasterRCNN:
+    """Build model and move to device. Called by trainer and inference."""
+    model = build_faster_rcnn(model_cfg)
+    model.to(device)
+    return model
+
+
+# ===========================================================================
+# PATH 1 — build from explicit components
+# Strategies: "imagenet", "none", "local"+load_backbone_only=True
+# Backbone weights already loaded by backbone.py.
+# RPN + ROI heads always randomly initialised here.
+# ===========================================================================
+
+def _build_from_components(model_cfg: ModelConfig) -> FasterRCNN:
+
+    # ── 1. Backbone ───────────────────────────────────────────────────────
+    # backbone.py builds BackboneWithFPN and loads weights per strategy.
+    # After this call:
+    #   .body weights: ImageNet / local / random depending on strategy
+    #   .fpn weights: always random
+#                 (FPN layers are newly constructed, not pretrained)
+    #   .out_channels: always 256
+    backbone = build_backbone(model_cfg)
+
+    # ── 2. AnchorGenerator ────────────────────────────────────────────────
+    # Generates anchor boxes at every spatial location on every FPN level.
+    #
+    # sizes: one tuple per FPN level (must match number of FPN outputs).
+    #   P2 → (32,)  : anchors of base size 32px (small objects: cyclists)
+    #   P3 → (64,)  : anchors of base size 64px
+    #   P4 → (128,) : anchors of base size 128px
+    #   P5 → (256,) : anchors of base size 256px
+    #   P6 → (512,) : anchors of base size 512px (large objects: buses, trucks)
+    #
+    # aspect_ratios: (0.5, 1.0, 2.0) applied to each size.
+    #   0.5  → tall anchor  (h = w*2)  good for: persons, riders
+    #   1.0  → square anchor           good for: cars
+    #   2.0  → wide anchor  (w = h*2)  good for: buses, trucks
+    #
+    # Total anchors per FPN level at spatial location (x,y): 3
+    # (1 size × 3 aspect ratios)
+    anchor_generator = AnchorGenerator(
+        sizes=((32,), (64,), (128,), (256,), (512,)),
+        aspect_ratios=((0.5, 1.0, 2.0),) * 5,
+    )
+
+    # ── 3. RPNHead ─────────────────────────────────────────────────────────
+    # Shared across all FPN levels (same weights applied to each level).
+    # This sharing works because FPN normalises all levels to 256 channels.
+    #
+    # Internal layers:
+    #   conv:       Conv2d(256, 256, kernel=3, padding=1) + ReLU
+    #               → [B, 256, H_l, W_l]  (same spatial size, 256ch)
+    #   cls_logits: Conv2d(256, 3, kernel=1)
+    #               → [B, 3, H_l, W_l]    (3 = num_anchors per location)
+    #   bbox_pred:  Conv2d(256, 12, kernel=1)
+    #               → [B, 12, H_l, W_l]   (12 = 3 anchors × 4 deltas)
+    #
+    # num_anchors_per_location()[0] = 3
+    # (asking anchor_generator how many anchors it produces per location)
+    rpn_head = RPNHead(
+        in_channels=backbone.out_channels,                            # 256
+        num_anchors=anchor_generator.num_anchors_per_location()[0],  # 3
+    )
+
+    # ── 4. RegionProposalNetwork ───────────────────────────────────────────
+    # Runs anchor scoring → box decoding → NMS → proposal selection.
+    #
+    # Matcher thresholds (assigns GT boxes to anchors for RPN training):
+    #   anchor IoU ≥ 0.7 with any GT → positive anchor (should detect object)
+    #   anchor IoU < 0.3 with all GT → negative anchor (background)
+    #   0.3 ≤ IoU < 0.7             → ignored during training
+    #
+    # Sampler (selects which anchors contribute to RPN loss):
+    #   256 anchors per image
+    #   up to 50% positive (128 pos + 128 neg ideally)
+    #   if fewer positives, fills remainder with negatives
+    #
+    # NMS:
+    #   pre_nms_top_n:  score-ranked anchors kept before NMS
+    #   post_nms_top_n: top proposals kept after NMS
+    #   nms_thresh=0.7: suppress anchors with IoU > 0.7 with a higher-scoring anchor
+    #
+    # score_thresh=0.0: keep all proposals regardless of score (filtering
+    # happens later in ROI heads by score_thresh=0.05)
+    rpn = RegionProposalNetwork(
+        anchor_generator=anchor_generator,
+        head=rpn_head,
+        fg_iou_thresh=0.7,
+        bg_iou_thresh=0.3,
+        batch_size_per_image=256,
+        positive_fraction=0.5,
+        pre_nms_top_n={"training": 2000, "testing": 1000},
+        post_nms_top_n={"training": 2000, "testing": 1000},
+        nms_thresh=0.7,
+        score_thresh=0.0,
+    )
+
+    # ── 5. MultiScaleRoIAlign ──────────────────────────────────────────────
+    # Extracts fixed-size feature grids for each proposal from FPN.
+    #
+    # Level assignment (which FPN level to pool from for each proposal):
+    #   k = clip( floor(4 + log2(sqrt(w×h) / 224)), min=2, max=5 )
+    #   small proposal  (e.g. 32×32)  → k=2 → pool from P2 (high resolution)
+    #   medium proposal (e.g. 128×128)→ k=3 → pool from P3
+    #   large proposal  (e.g. 512×512)→ k=5 → pool from P5 (semantic features)
+    #
+    # featmap_names=["0","1","2","3"]: FPN levels to use (P2..P5)
+    #   "pool" (P6) excluded: P6 is only for RPN anchor generation (large anchors)
+    #   not for ROI pooling (proposals at that scale are too large for 7×7 pool)
+    #
+    # output_size=7: each proposal is extracted as a 7×7 feature grid
+    #
+    # sampling_ratio=2: 2×2=4 bilinear sample points per output cell
+    #   improves alignment accuracy vs nearest-neighbor
+    roi_pooler = MultiScaleRoIAlign(
+        featmap_names=["0", "1", "2", "3"],
+        output_size=7,
+        sampling_ratio=2,
+    )
+
+    # ── 6. TwoMLPHead ──────────────────────────────────────────────────────
+    # Processes each ROI-pooled feature into a 1024-dim vector.
+    #
+    # Input shape:  [N_proposals, 256, 7, 7]
+    # After flatten: [N_proposals, 256×7×7] = [N_proposals, 12544]
+    # FC1:           [N_proposals, 12544] → [N_proposals, 1024] + ReLU
+    # FC2:           [N_proposals, 1024]  → [N_proposals, 1024] + ReLU
+    # Output:        [N_proposals, 1024]
+    #
+    # in_channels = backbone.out_channels × 7 × 7 = 256 × 49 = 12544
+    box_head = TwoMLPHead(
+        in_channels=backbone.out_channels * 7 * 7,  # 256 × 7 × 7 = 12544
+        representation_size=1024,
+    )
+
+    # ── 7. FastRCNNPredictor ───────────────────────────────────────────────
+    # Two parallel FC heads producing final class scores and box offsets.
+    #
+    # Input:     [N_proposals, 1024]
+    # cls_score: FC(1024, num_classes)     → [N_proposals, num_classes]
+    #            one score per class (including background=class 0)
+    # bbox_pred: FC(1024, num_classes × 4) → [N_proposals, num_classes × 4]
+    #            separate box delta for each class
+    #            at inference: use predicted class index to select the right 4
+    box_predictor = FastRCNNPredictor(
+        in_channels=1024,
+        num_classes=model_cfg.num_classes,  # 9 for Cityscapes (8 + background)
+    )
+
+    # ── 8. RoIHeads ────────────────────────────────────────────────────────
+    # Orchestrates proposal assignment, sampling, head forward, loss/decode.
+    #
+    # Matcher (assigns GT boxes to proposals for ROI training):
+    #   proposal IoU ≥ fg_iou_thresh=0.5 → positive (train to detect object)
+    #   proposal IoU < bg_iou_thresh=0.5 → negative (train as background)
+    #   Note: fg=bg=0.5 means no ignored region (every proposal is pos or neg)
+    #
+    # Sampler:
+    #   512 proposals per image
+    #   positive_fraction=0.25 → up to 128 positive + 384 negative per image
+    #   If fewer than 128 positives, fills remainder with negatives
+    #
+    # bbox_reg_weights=None → uses default (10.0, 10.0, 5.0, 5.0)
+    #   These scale the regression targets during training to normalize magnitude.
+    #   Higher weights for x,y (10) vs w,h (5): center regression more important.
+    #
+    # Post-processing (inference only, no effect during training):
+    #   score_thresh=0.05: drop detections with confidence < 5%
+    #   nms_thresh=0.5:    per-class NMS, suppress IoU > 0.5
+    #   detections_per_img=100: max final detections returned per image
+    roi_heads = RoIHeads(
+        box_roi_pool=roi_pooler,
+        box_head=box_head,
+        box_predictor=box_predictor,
+        fg_iou_thresh=0.5,
+        bg_iou_thresh=0.5,
+        batch_size_per_image=512,
+        positive_fraction=0.25,
+        bbox_reg_weights=None,
+        score_thresh=0.05,
+        nms_thresh=0.5,
+        detections_per_img=100,
+    )
+
+    # ── 9. GeneralizedRCNNTransform ───────────────────────────────────────
+    # Applied BEFORE backbone. Three sequential operations:
+    #
+    # 1. Normalize per channel: pixel = (pixel - mean) / std
+    #    Using ImageNet statistics even for random-init models is standard.
+    #    Keeps pixel values in a range that works well with ResNet BatchNorm.
+    #
+    # 2. Resize: scale so shortest side is in [min_size, max_size] range.
+    #    aspect ratio preserved. Longer side capped at max_size.
+    #    Cityscapes images are 2048×1024 → resized to ~800×1600 (capped at 1333)
+    #
+    # 3. Batch: zero-pad all images in batch to the same H'×W'.
+    #    Returns ImageList with .tensors=[B,3,H',W'] and .image_sizes=list
+    transform = GeneralizedRCNNTransform(
+        min_size=model_cfg.min_size,       # 800
+        max_size=model_cfg.max_size,       # 1333
+        image_mean=[0.485, 0.456, 0.406],
+        image_std=[0.229, 0.224, 0.225],
+    )
+
+    # ── 10. FasterRCNN (final assembly) ───────────────────────────────────
+    # Wraps all components. forward() orchestrates the full pipeline:
+    #   train mode: (images, targets) → loss_dict
+    #     {"loss_classifier", "loss_box_reg", "loss_objectness", "loss_rpn_box_reg"}
+    #   eval mode:  (images,) → list of dicts per image
+    #     [{"boxes":[K,4], "labels":[K], "scores":[K]}, ...]
+    #
+    # num_classes=None: we pass box_predictor directly, so FasterRCNN should
+    # NOT create its own predictor. Passing num_classes would override ours.
+    model = FasterRCNN(
+        backbone=backbone,
+        num_classes=None,
+        rpn=rpn,
+        roi_heads=roi_heads,
+        transform=transform,
+    )
+
+    print(
+        f"[Detector] Built from components | "
+        f"strategy='{model_cfg.backbone_weights}' | "
+        f"num_classes={model_cfg.num_classes}"
+    )
+    return model
+
+
+# ===========================================================================
+# PATH 2 — load full model weights
+# Strategies: "coco", "local"+load_backbone_only=False
+# Builds architecture first (random weights), then loads full checkpoint.
+# ===========================================================================
+
+def _build_from_full_weights(model_cfg: ModelConfig) -> FasterRCNN:
+    """
+    Build the full FasterRCNN architecture, load a complete weight file
+    into it (backbone + RPN + ROI heads), then replace the box predictor
+    for our num_classes.
+
+    Why build architecture first, then load?
+    PyTorch's load_state_dict() requires the model to already exist.
+    You cannot load weights into nothing — the nn.Module structure
+    must be constructed first, then weights are copied into it.
+    """
+    strategy = model_cfg.backbone_weights.lower()
+
+    # ── Build architecture (random weights) ────────────────────────────────
+    # We use the torchvision factory here (weights=None) because for "coco"
+    # we need the architecture to exactly match the COCO checkpoint's key names.
+    # The factory guarantees this. For "local"+load_backbone_only=False we need the same
+    # architecture as whatever produced the local .pth.
+    model = fasterrcnn_resnet50_fpn(
+        weights=None,                  # random weights, will be overwritten below
+        min_size=model_cfg.min_size,
+        max_size=model_cfg.max_size,
+        trainable_backbone_layers=model_cfg.trainable_backbone_layers,
+    )
+
+    # ── Load full weights ──────────────────────────────────────────────────
+    if strategy == "coco":
+        # Download and load official COCO pretrained weights.
+        # This sets weights for: backbone (body+FPN) + RPN + ROI heads
+        # # Full COCO weights are loaded first, including the original
+        # COCO box predictor (91 classes). We replace the predictor next.
+        weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+        model.load_state_dict(weights.get_state_dict(progress=True))
+        print(
+            "[Detector] strategy='coco' | "
+            "Full COCO pretrained weights loaded (backbone+RPN+ROI heads)"
+        )
+
+    elif strategy == "local" and not model_cfg.load_backbone_only:
+        # Load full model weights from local file.
+        # File must have been saved by save_checkpoint() (our format)
+        # or be a raw torchvision state dict.
+        path = model_cfg.local_weights_path
+        if not path:
+            raise ValueError(
+                "[Detector] local_weights_path is null. "
+                "Set it in config for strategy='local'."
+            )
+        checkpoint = torch.load(path, map_location="cpu")
+
+        # Our save_checkpoint() format wraps state dict under "model_state_dict"
+        sd = checkpoint.get("model_state_dict", checkpoint)
+        missing, unexpected = model.load_state_dict(sd, strict=True)
+        print(
+            f"[Detector] strategy='local'+load_backbone_only=False | "
+            f"Loaded from: {path} | "
+            f"missing={len(missing)} | unexpected={len(unexpected)}"
+        )
+
+    # ── Replace box predictor ──────────────────────────────────────────────
+    # The loaded weights have 91 classes (COCO) or whatever the local file had.
+    # We replace the final classification + regression heads for our num_classes.
+    # Only these two FC layers are randomly reinitialised — everything else
+    # keeps the pretrained weights.
+    #
+    # in_features = 1024 (output size of TwoMLPHead, same regardless of dataset)
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(
+        in_channels=in_features,       # 1024
+        num_classes=model_cfg.num_classes,
+    )
+    print(
+        f"[Detector] Box predictor replaced | "
+        f"in_features={in_features} | "
+        f"num_classes={model_cfg.num_classes} (was 91)"
+    )
+
+    return model
+
+
+
+
+"
+training/trainer.py
+
+Metric naming (internal keys, consistent everywhere):
+  map_50_95  →  mAP@[0.5:0.95]   primary COCO metric
+  map_50     →  mAP@0.50
+  map_75     →  mAP@0.75
+
+Best checkpoint selection:
+  Primary criterion  : highest val map_50_95
+  Tie-break criterion: lowest val loss (when map_50_95 equal to 4dp)
+
+Validation frequency (validate_every) and checkpoint frequency (save_every)
+are decoupled. You can validate every epoch but checkpoint every 5.
+
+Note on model.train() during validation loss computation:
+  torchvision Faster R-CNN only returns a loss dict in train mode.
+  We call model.train() solely to access the loss dict, not to affect
+  BatchNorm/Dropout statistics — torch.no_grad() prevents weight updates.
+  This is the standard workaround for torchvision detection models.
+
+TODO (future):
+  - AMP (Automatic Mixed Precision): add torch.autocast + GradScaler
+    when cfg.training.amp is True. Insertion point marked below.
+  - Gradient accumulation: batch effective size =
+    batch_size * accumulation_steps. Insertion point marked below.
+  - ReduceLROnPlateau: scheduler.step(metric) already supported
+    via _scheduler_step() helper below.
+"""
+
+import time
+import json
+from pathlib import Path
+from typing import Optional
+
+import torch
+from torch.utils.data import DataLoader
+
+from objdet.entity.config_entity import TrainingPipelineConfig
+from objdet.evaluation.metrics import COCOEvaluator
+from objdet.tracking.tensorboard_logger import TensorBoardLogger
+from objdet.tracking.mlflow_logger import MLflowLogger
+from objdet.utils.checkpoint import (
+    save_checkpoint, save_best_checkpoint,
+    load_checkpoint, cleanup_old_checkpoints,
+)
+
+
+def build_optimizer(model, training_cfg):
+    from torch.optim import SGD, Adam, AdamW
+    params = [p for p in model.parameters() if p.requires_grad]
+    name = training_cfg.optimizer.lower()
+    if name == "sgd":
+        opt = SGD(params, lr=training_cfg.learning_rate,
+                  momentum=training_cfg.momentum,
+                  weight_decay=training_cfg.weight_decay)
+    elif name == "adam":
+        opt = Adam(params, lr=training_cfg.learning_rate,
+                   weight_decay=training_cfg.weight_decay)
+    elif name == "adamw":
+        opt = AdamW(params, lr=training_cfg.learning_rate,
+                    weight_decay=training_cfg.weight_decay)
+    else:
+        raise ValueError(f"Unknown optimizer: {name}")
+    print(
+        f"[Optimizer] {name.upper()} | lr={training_cfg.learning_rate} | "
+        f"wd={training_cfg.weight_decay} | "
+        f"params={sum(p.numel() for p in params):,}"
+    )
+    return opt
+
+
+def build_scheduler(optimizer, training_cfg):
+    from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, ConstantLR
+    name = training_cfg.lr_scheduler.lower()
+    if name == "step":
+        return StepLR(optimizer,
+                      step_size=training_cfg.lr_step_size,
+                      gamma=training_cfg.lr_gamma)
+    elif name == "cosine":
+        return CosineAnnealingLR(optimizer,
+                                 T_max=training_cfg.epochs,
+                                 eta_min=training_cfg.learning_rate * 0.01)
+    elif name == "none":
+        return ConstantLR(optimizer, factor=1.0, total_iters=0)
+    else:
+        raise ValueError(f"Unknown scheduler: {name}")
+
+
+class Trainer:
+    """
+    Training loop with full loss/metric history tracking.
+
+    History structure:
+    {
+        "train": {
+            "epoch":           [1, 2, ...],
+            "total_loss":      [...],
+            "loss_classifier": [...],
+            "loss_box_reg":    [...],
+            "loss_objectness": [...],
+            "loss_rpn_box_reg":[...],
+        },
+        "val": {
+            "epoch":           [1, 2, ...],   # every validate_every epochs
+            "total_loss":      [...],
+            "loss_classifier": [...],
+            "loss_box_reg":    [...],
+            "loss_objectness": [...],
+            "loss_rpn_box_reg":[...],
+            "map_50_95":       [...],   # mAP@[0.5:0.95]
+            "map_50":          [...],   # mAP@0.50
+            "map_75":          [...],   # mAP@0.75
+            "ap_per_class":    [{...}, ...],
+            "precision":       [...],
+            "recall":          [...],
+        }
+    }
+    """
+
+    LOSS_KEYS = [
+        "loss_classifier",
+        "loss_box_reg",
+        "loss_objectness",
+        "loss_rpn_box_reg",
+    ]
+
+    # TensorBoard display tags — pretty names only for UI, not used internally
+    _TB_METRIC_TAGS = {
+        "map_50_95": "epoch/val_mAP[.5:.95]",
+        "map_50":    "epoch/val_mAP@0.50",
+        "map_75":    "epoch/val_mAP@0.75",
+        "precision": "epoch/val_precision",
+        "recall":    "epoch/val_recall",
+    }
+
+    # MLflow metric keys — no special chars allowed in MLflow keys
+    _MLF_METRIC_KEYS = {
+        "map_50_95": "val_mAP_50_95",
+        "map_50":    "val_mAP_50",
+        "map_75":    "val_mAP_75",
+        "precision": "val_precision",
+        "recall":    "val_recall",
+    }
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        cfg: TrainingPipelineConfig,
+        tb_logger: Optional[TensorBoardLogger] = None,
+        mlf_logger: Optional[MLflowLogger] = None,
+    ):
+        self.model = model
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.cfg = cfg
+        self.tb_logger = tb_logger
+        self.mlf_logger = mlf_logger
+
+        self.device = torch.device(
+            cfg.training.device if torch.cuda.is_available() else "cpu"
+        )
+        self.model.to(self.device)
+
+        self.optimizer = build_optimizer(model, cfg.training)
+        self.scheduler = build_scheduler(self.optimizer, cfg.training)
+
+        self.start_epoch = 0
+        self.global_step = 0
+
+        self.ckpt_dir = Path(cfg.checkpointing.save_dir) / cfg.experiment_name
+        self.ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── History — uses standardized internal metric keys ──────────
+        self.history = {
+            "train": {k: [] for k in ["epoch", "total_loss"] + self.LOSS_KEYS},
+            "val": {k: [] for k in (
+                ["epoch", "total_loss"] + self.LOSS_KEYS +
+                ["map_50_95", "map_50", "map_75",   # standardized keys
+                 "ap_per_class", "precision", "recall"]
+            )},
+        }
+        self.history_path = self.ckpt_dir / "training_history.json"
+
+        # Best checkpoint tracking
+        # Primary  : highest map_50_95
+        # Tie-break: lowest loss (when map_50_95 equal to 4dp)
+        self.best_map_50_95 = 0.0
+        self.best_loss_at_best_map = float("inf")
+
+        print(f"[Trainer] Device        : {self.device}")
+        print(f"[Trainer] Checkpoints   : {self.ckpt_dir}")
+        print(f"[Trainer] History file  : {self.history_path}")
+        print(f"[Trainer] Validate every: {cfg.checkpointing.validate_every} epoch(s)")
+        print(f"[Trainer] Save every    : {cfg.checkpointing.save_every} epoch(s)")
+
+        if self.tb_logger:
+            hparam_dict = {
+                "lr":               cfg.training.learning_rate,
+                "optimizer":        cfg.training.optimizer,
+                "batch_size":       cfg.training.batch_size,
+                "epochs":           cfg.training.epochs,
+                "backbone":         cfg.model.backbone_weights,
+                "trainable_layers": cfg.model.trainable_backbone_layers,
+                "loss_cls":         cfg.loss.classification,
+                "loss_box":         cfg.loss.box_regression,
+                "lr_scheduler":     cfg.training.lr_scheduler,
+                "weight_decay":     cfg.training.weight_decay,
+            }
+            metric_dict = {
+                "epoch/val_mAP[.5:.95]": 0.0,
+                "epoch/val_mAP@0.50":    0.0,
+            }
+            self.tb_logger.log_hparams(hparam_dict, metric_dict)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def resume(self, checkpoint_path: str | Path):
+        """Load checkpoint and restore history."""
+        self.start_epoch = load_checkpoint(
+            checkpoint_path, self.model, self.optimizer, self.scheduler
+        )
+        self.global_step = self.start_epoch * len(self.train_loader)
+
+        if self.history_path.exists():
+            with open(self.history_path, "r") as f:
+                self.history = json.load(f)
+            # Restore best map seen so far so we don't re-save inferior checkpoints
+            val_maps = self.history.get("val", {}).get("map_50_95", [])
+            val_losses = self.history.get("val", {}).get("total_loss", [])
+            if val_maps:
+                self.best_map_50_95 = max(val_maps)
+                # Find loss at that best epoch
+                best_idx = val_maps.index(self.best_map_50_95)
+                if best_idx < len(val_losses):
+                    self.best_loss_at_best_map = val_losses[best_idx]
+            print(f"[Trainer] Restored history. Best mAP@[.5:.95] so far: {self.best_map_50_95:.4f}")
+        print(f"[Trainer] Resumed from epoch {self.start_epoch}")
+
+    def fit(self):
+        """Full training loop."""
+        for epoch in range(self.start_epoch, self.cfg.training.epochs):
+            print(f"\n{'='*60}")
+            print(f"Epoch {epoch + 1} / {self.cfg.training.epochs}")
+            print(f"{'='*60}")
+
+            # ── Train ─────────────────────────────────────────────────
+            train_losses = self._train_one_epoch(epoch)
+
+            # NaN guard — catches exploding gradients silently
+            if not torch.isfinite(torch.tensor(train_losses["total_loss"])):
+                print(
+                    f"[Trainer] WARNING: NaN/Inf loss at epoch {epoch+1}. "
+                    "Stopping training. Check learning rate and grad_clip."
+                )
+                break
+
+            self.history["train"]["epoch"].append(epoch + 1)
+            self.history["train"]["total_loss"].append(train_losses["total_loss"])
+            for k in self.LOSS_KEYS:
+                self.history["train"][k].append(train_losses.get(k, 0.0))
+
+            # ── Validate ───────────────────────────────────────────────
+            # validate_every and save_every are now independent.
+            # Always validate on the last epoch regardless.
+            run_val = (
+                (epoch + 1) % self.cfg.checkpointing.validate_every == 0
+                or (epoch + 1) == self.cfg.training.epochs
+            )
+
+            if run_val:
+                val_losses, val_metrics = self._validate(epoch)
+
+                # ── Normalize metric keys to internal standard ─────────
+                # COCOEvaluator may return "map" for mAP@[.5:.95].
+                # We rename here so the rest of the code is consistent.
+                val_metrics = _normalize_metric_keys(val_metrics)
+
+                self.history["val"]["epoch"].append(epoch + 1)
+                self.history["val"]["total_loss"].append(val_losses["total_loss"])
+                for k in self.LOSS_KEYS:
+                    self.history["val"][k].append(val_losses.get(k, 0.0))
+                self.history["val"]["map_50_95"].append(val_metrics.get("map_50_95", 0.0))
+                self.history["val"]["map_50"].append(val_metrics.get("map_50", 0.0))
+                self.history["val"]["map_75"].append(val_metrics.get("map_75", 0.0))
+                self.history["val"]["ap_per_class"].append(val_metrics.get("ap_per_class", {}))
+                self.history["val"]["precision"].append(val_metrics.get("precision", 0.0))
+                self.history["val"]["recall"].append(val_metrics.get("recall", 0.0))
+            else:
+                val_losses  = {"total_loss": float("nan")}
+                val_metrics = {"map_50_95": float("nan")}
+
+            # ── LR scheduler step ──────────────────────────────────────
+            self._scheduler_step(val_metrics.get("map_50_95") if run_val else None)
+            lr = self.optimizer.param_groups[0]["lr"]
+
+            # ── Console summary ────────────────────────────────────────
+            print(
+                f"\n[Epoch {epoch+1}] lr={lr:.6f} | "
+                f"train_loss={train_losses['total_loss']:.4f} | "
+                f"cls={train_losses.get('loss_classifier', 0):.4f} | "
+                f"box={train_losses.get('loss_box_reg', 0):.4f} | "
+                f"obj={train_losses.get('loss_objectness', 0):.4f} | "
+                f"rpn={train_losses.get('loss_rpn_box_reg', 0):.4f}"
+            )
+            if run_val:
+                print(
+                    f"[Epoch {epoch+1}] val_loss={val_losses['total_loss']:.4f} | "
+                    f"mAP@[.5:.95]={val_metrics.get('map_50_95', 0):.4f} | "
+                    f"mAP@50={val_metrics.get('map_50', 0):.4f} | "
+                    f"mAP@75={val_metrics.get('map_75', 0):.4f}"
+                )
+                if "ap_per_class" in val_metrics:
+                    print(f"[Epoch {epoch+1}] Per-class AP:")
+                    for cls_name, ap in val_metrics["ap_per_class"].items():
+                        print(f"  {cls_name:<15}: {ap:.4f}")
+
+            # ── TensorBoard ────────────────────────────────────────────
+            if self.tb_logger:
+                self.tb_logger.log_scalar(
+                    "epoch/train_total_loss", train_losses["total_loss"], epoch
+                )
+                for k in self.LOSS_KEYS:
+                    self.tb_logger.log_scalar(
+                        f"epoch/train_{k}", train_losses.get(k, 0.0), epoch
+                    )
+                self.tb_logger.log_scalar("epoch/lr", lr, epoch)
+
+                if run_val:
+                    self.tb_logger.log_scalar(
+                        "epoch/val_total_loss", val_losses["total_loss"], epoch
+                    )
+                    for k in self.LOSS_KEYS:
+                        self.tb_logger.log_scalar(
+                            f"epoch/val_{k}", val_losses.get(k, 0.0), epoch
+                        )
+                    for internal_key, tb_tag in self._TB_METRIC_TAGS.items():
+                        if internal_key in val_metrics:
+                            self.tb_logger.log_scalar(
+                                tb_tag, val_metrics[internal_key], epoch
+                            )
+                    for cls_name, ap_val in val_metrics.get("ap_per_class", {}).items():
+                        self.tb_logger.log_scalar(
+                            f"per_class_ap/{cls_name}", ap_val, epoch
+                        )
+
+            # ── MLflow ─────────────────────────────────────────────────
+            if self.mlf_logger:
+                metrics_to_log = {
+                    "train_total_loss": train_losses["total_loss"],
+                    "lr": lr,
+                }
+                metrics_to_log.update(
+                    {f"train_{k}": train_losses.get(k, 0.0) for k in self.LOSS_KEYS}
+                )
+                if run_val:
+                    metrics_to_log["val_total_loss"] = val_losses["total_loss"]
+                    metrics_to_log.update(
+                        {f"val_{k}": val_losses.get(k, 0.0) for k in self.LOSS_KEYS}
+                    )
+                    for internal_key, mlf_key in self._MLF_METRIC_KEYS.items():
+                        if internal_key in val_metrics:
+                            metrics_to_log[mlf_key] = val_metrics[internal_key]
+                    for cls_name, ap_val in val_metrics.get("ap_per_class", {}).items():
+                        metrics_to_log[f"ap_{cls_name}"] = ap_val
+
+                self.mlf_logger.log_metrics(metrics_to_log, step=epoch)
+
+            # ── Persist history ────────────────────────────────────────
+            self._save_history()
+
+            # ── Checkpoint ────────────────────────────────────────────
+            run_save = (
+                (epoch + 1) % self.cfg.checkpointing.save_every == 0
+                or (epoch + 1) == self.cfg.training.epochs
+            )
+            if run_save:
+                current_map = val_metrics.get("map_50_95", 0.0) if run_val else 0.0
+                current_loss = train_losses["total_loss"]
+
+                save_checkpoint(
+                    model=self.model,
+                    optimizer=self.optimizer,
+                    scheduler=self.scheduler,
+                    epoch=epoch + 1,
+                    loss=current_loss,
+                    map_50_95=current_map,
+                    experiment_name=self.cfg.experiment_name,
+                    save_dir=self.ckpt_dir,
+                    extra={"history": self.history},
+                )
+                cleanup_old_checkpoints(
+                    self.ckpt_dir, keep=self.cfg.checkpointing.keep_last
+                )
+
+                # ── Best checkpoint: primary=mAP, tie-break=loss ───────
+                if run_val and not torch.isnan(torch.tensor(current_map)):
+                    is_better_map  = current_map > self.best_map_50_95
+                    is_equal_map   = abs(current_map - self.best_map_50_95) < 1e-4
+                    is_better_loss = current_loss < self.best_loss_at_best_map
+
+                    if is_better_map or (is_equal_map and is_better_loss):
+                        self.best_map_50_95        = current_map
+                        self.best_loss_at_best_map = current_loss
+                        save_best_checkpoint(
+                            model=self.model,
+                            optimizer=self.optimizer,
+                            scheduler=self.scheduler,
+                            epoch=epoch + 1,
+                            loss=current_loss,
+                            map_50_95=current_map,
+                            experiment_name=self.cfg.experiment_name,
+                            save_dir=self.ckpt_dir,
+                            extra={"history": self.history},
+                        )
+
+        print("\n[Trainer] Training complete.")
+        print(
+            f"[Trainer] Best mAP@[.5:.95] = {self.best_map_50_95:.4f} "
+            f"(loss at best = {self.best_loss_at_best_map:.4f})"
+        )
+        print(f"[Trainer] History saved to: {self.history_path}")
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _scheduler_step(self, metric: Optional[float] = None):
+        """
+        Step the LR scheduler.
+
+        Handles both epoch-based schedulers (StepLR, CosineAnnealingLR)
+        and metric-based schedulers (ReduceLROnPlateau).
+        ReduceLROnPlateau requires scheduler.step(metric).
+        """
+        from torch.optim.lr_scheduler import ReduceLROnPlateau
+        if isinstance(self.scheduler, ReduceLROnPlateau):
+            if metric is not None and not torch.isnan(torch.tensor(metric)):
+                self.scheduler.step(metric)
+            # else: skip step — no valid metric this epoch
+        else:
+            self.scheduler.step()
+
+    def _train_one_epoch(self, epoch: int) -> dict:
+        self.model.train()
+        accum = {k: 0.0 for k in ["total_loss"] + self.LOSS_KEYS}
+        log_every = self.cfg.logging.log_every
+        t0 = time.time()
+
+        # TODO: AMP — wrap forward+backward with torch.autocast here
+        # if self.cfg.training.amp:
+        #     scaler = torch.cuda.amp.GradScaler()
+
+        for batch_idx, (images, targets) in enumerate(self.train_loader):
+            images  = [img.to(self.device) for img in images]
+            targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+
+            loss_dict  = self.model(images, targets)
+            total_loss = sum(v for v in loss_dict.values())
+
+            # NaN guard per batch
+            if not torch.isfinite(total_loss):
+                print(
+                    f"[Trainer] WARNING: Non-finite loss at batch {batch_idx}. "
+                    f"Skipping update."
+                )
+                continue
+
+            self.optimizer.zero_grad()
+            total_loss.backward()
+            # TODO: AMP — scaler.scale(total_loss).backward(); scaler.step(); scaler.update()
+
+            if self.cfg.training.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self.cfg.training.grad_clip
+                )
+            self.optimizer.step()
+
+            accum["total_loss"] += total_loss.item()
+            for k in self.LOSS_KEYS:
+                accum[k] += loss_dict.get(k, torch.tensor(0.0)).item()
+            self.global_step += 1
+
+            if (batch_idx + 1) % log_every == 0:
+                elapsed = time.time() - t0
+                print(
+                    f"  [{batch_idx+1:>4}/{len(self.train_loader)}] "
+                    f"total={total_loss.item():.4f} | "
+                    f"cls={loss_dict.get('loss_classifier', torch.tensor(0)).item():.4f} | "
+                    f"box={loss_dict.get('loss_box_reg', torch.tensor(0)).item():.4f} | "
+                    f"obj={loss_dict.get('loss_objectness', torch.tensor(0)).item():.4f} | "
+                    f"rpn={loss_dict.get('loss_rpn_box_reg', torch.tensor(0)).item():.4f} "
+                    f"[{elapsed:.1f}s]"
+                )
+                if self.tb_logger:
+                    self.tb_logger.log_scalar(
+                        "batch/total_train_loss", total_loss.item(), self.global_step
+                    )
+                    for k in self.LOSS_KEYS:
+                        self.tb_logger.log_scalar(
+                            f"batch/{k}",
+                            loss_dict.get(k, torch.tensor(0)).item(),
+                            self.global_step,
+                        )
+
+        n = max(len(self.train_loader), 1)
+        return {k: v / n for k, v in accum.items()}
+
+    def _validate(self, epoch: int) -> tuple[dict, dict]:
+        """
+        Compute validation loss and mAP.
+
+        NOTE on model.train() usage:
+          torchvision Faster R-CNN returns a loss dict ONLY in train mode.
+          model.train() here is required to access losses, NOT to affect
+          BatchNorm/Dropout behavior — torch.no_grad() prevents any updates.
+          After loss computation, model is switched to eval mode for mAP.
+        """
+        self.model.train()
+        val_accum = {k: 0.0 for k in ["total_loss"] + self.LOSS_KEYS}
+
+        with torch.no_grad():
+            for images, targets in self.val_loader:
+                images  = [img.to(self.device) for img in images]
+                targets = [{k: v.to(self.device) for k, v in t.items()} for t in targets]
+                loss_dict  = self.model(images, targets)
+                total_loss = sum(v for v in loss_dict.values())
+                val_accum["total_loss"] += total_loss.item()
+                for k in self.LOSS_KEYS:
+                    val_accum[k] += loss_dict.get(k, torch.tensor(0.0)).item()
+
+        n = max(len(self.val_loader), 1)
+        val_losses = {k: v / n for k, v in val_accum.items()}
+
+        evaluator = COCOEvaluator(self.device, self.cfg.eval)
+        evaluator.evaluate(self.model, self.val_loader)
+        val_metrics = evaluator.get_metrics()
+
+        return val_losses, val_metrics
+
+    def _save_history(self):
+        with open(self.history_path, "w") as f:
+            json.dump(self.history, f, indent=2)
+
+
+# ===========================================================================
+# MODULE-LEVEL HELPER
+# ===========================================================================
+
+def _normalize_metric_keys(metrics: dict) -> dict:
+    """
+    Normalize COCOEvaluator output to internal standard keys.
+
+    COCOEvaluator may return "map" for mAP@[.5:.95] (torchmetrics default).
+    We rename to "map_50_95" so all downstream code uses a single key.
+
+    Input keys handled:
+      "map"     → "map_50_95"
+      "map_50"  → unchanged
+      "map_75"  → unchanged
+      all others → unchanged
+    """
+    normalized = {}
+    for k, v in metrics.items():
+        if k == "map":
+            normalized["map_50_95"] = v   # primary rename
+        else:
+            normalized[k] = v
+    return normalized
