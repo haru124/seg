@@ -64,6 +64,7 @@ def evaluate_test_set(model, test_loader, loss_fn, metrics, device, cfg):
     Returns metrics dict.
     """
     model.eval()
+    loss_fn.eval()
     metrics.reset()
     total_loss = 0.0
     all_preds = []
@@ -255,7 +256,7 @@ def log_results(result, cfg):
             for cls_idx, class_name in enumerate(CITYSCAPES_CLASSES):
                 iou = per_class_iou[cls_idx]
                 iou_val = float(iou) if not np.isnan(iou) else 0.0
-                tb.log_scalar({f"test_iou_{class_name}": iou_val}, step=0)
+                tb.log_scalar(f"Test/iou_{class_name}",iou_val,0)  # tag, value, step
 
             tb.close()
             print("[TensorBoard] Test results logged.")
@@ -296,10 +297,11 @@ def main(args):
     model = model.to(device)
 
     # ── Build loss and metrics ──
+    loss_kwargs = dict(cfg.loss.kwargs) if getattr(cfg.loss, "kwargs", None) else {}
     loss_fn = build_loss(
         cfg.loss.type,
         ignore_index=cfg.data.ignore_index,
-        **cfg.loss.kwargs
+        **loss_kwargs
     )
     metrics = SegmentationMetrics(
         num_classes=cfg.data.num_classes,

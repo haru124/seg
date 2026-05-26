@@ -34,6 +34,8 @@ training:
   epochs: 30
   lr: 0.0001
   lr_scheduler: "poly"
+  #lr_scheduler: "cosine_warmup"   # epoch-level, stepped in train()
+  #warmup_epochs: 5                # linear warmup for first 5 epochs
   #momentum: 0.9
   weight_decay: 0.0001
   optimizer: "adamw"

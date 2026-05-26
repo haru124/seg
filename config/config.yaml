@@ -34,6 +34,7 @@ training:
   epochs: 50
   lr: 0.007
   lr_scheduler: "poly"          # poly | cosine | step
+  warmup_epochs: 0
   momentum: 0.9
   weight_decay: 1.0e-4
   optimizer: "sgd"              # sgd | adamw | adam

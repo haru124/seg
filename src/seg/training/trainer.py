@@ -21,6 +21,8 @@ import numpy as np
 import json
 from datetime import datetime
 
+from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
+
 
 from src.seg.evaluation.metrics import SegmentationMetrics, CITYSCAPES_CLASSES
 from src.seg.utils.checkpoint import save_checkpoint, load_checkpoint
@@ -28,6 +30,12 @@ from src.seg.utils.common import setup_logger
 from src.seg.tracking.mlflow_logger import MLflowLogger
 from src.seg.tracking.tensorboard_logger import TensorboardLogger
 from src.seg.entity.config_entity import ExperimentConfig
+
+
+# ══════════════════════════════════════════════════════════════════════
+# EARLY STOPPING
+# ══════════════════════════════════════════════════════════════════════
+
 
 class EarlyStopping:
     """
@@ -157,6 +165,9 @@ class Trainer:
             f"[EarlyStopping] patience={patience}, min_delta={min_delta}, monitor=mIoU"
         )
 
+        # ── Log parameter group LRs for multi-group optimizer ─────────
+        self._log_param_groups()
+
         # ── Training history ──────────────────────────────────────
         self.history = {
             "experiment_id": cfg.experiment_id,
@@ -192,12 +203,63 @@ class Trainer:
 
         self.history_path = self.history_dir / f"{cfg.experiment_id}_{self.run_timestamp}_training_history.json"
 
+    # ── Helper: log param groups ───────────────────────────────────────
+
+    def _log_param_groups(self):
+        """Log LR for every optimizer parameter group at startup."""
+        groups = self.optimizer.param_groups
+        if len(groups) == 1:
+            self.logger.info(
+                f"[Optimizer] Single group — lr={groups[0]['lr']}"
+            )
+        else:
+            for i, g in enumerate(groups):
+                name = g.get("name", f"group_{i}")
+                self.logger.info(
+                    f"[Optimizer] Group {i} ({name}): "
+                    f"{len(g['params'])} params, lr={g['lr']}"
+                )
+
+    # ── LR scheduler step ─────────────────────────────────────────────
+
+    def _scheduler_step(self, val_metric: float = None):
+        """
+        Step the LR scheduler.
+
+        ReduceLROnPlateau requires a metric value — it decides whether
+        to reduce LR based on whether the metric improved.
+
+        All other schedulers (StepLR, CosineAnnealingLR, SequentialLR,
+        ConstantLR, LinearLR) step purely on epoch count — no metric needed.
+
+        Step epoch-level schedulers only.
+
+        LambdaLR (Poly LR) is batch-level — already stepped inside _train_epoch.
+        Calling it again here would corrupt the LR schedule by adding extra steps
+        equal to number of validation epochs.
+
+        """
+        if self.scheduler is None:
+            return
+        if isinstance(self.scheduler, LambdaLR):
+            return   # ← already stepped per-batch — do NOT step again here
+
+        if isinstance(self.scheduler, ReduceLROnPlateau):
+            if val_metric is not None:
+                self.scheduler.step(val_metric)
+            # If no val metric yet (eval_interval > 1), skip — don't step plateau
+            return
+        
+        # All other epoch-level schedulers (CosineAnnealingLR, StepLR, SequentialLR)
+        self.scheduler.step()
+
 
     # ── Train one epoch ────────────────────────────────────────────────
     
     def _train_epoch(self, epoch: int):
         start_time = time.time()
         self.model.train()
+        self.loss_fn.train()      # ←re-enables aux loss during training
         total_loss = 0.0
         accum      = self.cfg.training.accumulation_steps
 
@@ -228,9 +290,21 @@ class Trainer:
                     )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
-                if self.scheduler is not None:   #LR step
-                    self.scheduler.step()
+                 
+                # Step ONLY batch-level schedulers here.
+                # Poly LR (LambdaLR) counts total iterations — must step every batch.
+                # Cosine/Step/Plateau are epoch-level — stepped in train() after validation.
+                if self.scheduler is not None and isinstance(self.scheduler, LambdaLR):   #LR step
+                    self.scheduler.step()   #  # ← ONLY for Poly LR steps per batch
+
+                # SequentialLR, CosineAnnealingLR, StepLR — all epoch-level, stepped in train()
+
                 self.optimizer.zero_grad()
+
+                # ── Epoch-based schedulers step here (inside batch loop
+                #    only if your scheduler is batch-level, e.g. OneCycleLR).
+                #    For epoch-level schedulers we step in train() below.
+
 
             batch_loss  = loss.item() * accum
             total_loss += batch_loss
@@ -245,6 +319,9 @@ class Trainer:
     def _val_epoch(self, epoch: int) -> dict:
         val_start_time = time.time()
         self.model.eval()
+        self.loss_fn.eval()   #sets loss_fn.training=False
+                              #so aux head loss is skipped during validation
+
         self.metrics.reset()
         total_loss = 0.0
         self.metrics.compute_boundary = (epoch%5 == 0)
@@ -297,6 +374,13 @@ class Trainer:
             f"train_time={val_metrics['train_time']:.1f}s | "
             f"val_time={val_metrics['val_time']:.1f}s"
         )
+         # Log current LR for all param groups
+        lrs = [g["lr"] for g in self.optimizer.param_groups]
+        lr_str = " | ".join(
+            f"lr_group{i}={lr:.2e}" for i, lr in enumerate(lrs)
+        )
+        self.logger.info(f"Epoch {epoch:03d} | {lr_str}")
+
         if epoch %5 == 0:
 
             # Per-class IoU to file logger
@@ -326,6 +410,12 @@ class Trainer:
                 
                 #self.tb.log_scalar("Metrics/boundary_iou", val_metrics["boundary_iou"],          epoch)
                 #self.tb.log_scalar("Metrics/boundary_f",   val_metrics["boundary_fscore"],       epoch)
+
+                # Log LR per group — useful to see warmup curve and group divergence
+                for i, g in enumerate(self.optimizer.param_groups):
+                    name = g.get("name", f"group_{i}")
+                    self.tb.log_scalar(f"LR/{name}", g["lr"], epoch)
+
                 # ✅ Per-class metrics: LOG ONLY EVERY 5 EPOCHS
                 if epoch % 5 == 0:
                     per_class_iou = val_metrics["per_class_iou"]
@@ -335,9 +425,6 @@ class Trainer:
                         if not np.isnan(iou):
                             self.tb.log_scalar(f"PerClass_IoU/{cls_name}", iou, epoch)
             
-            # LR
-            current_lr = self.optimizer.param_groups[0]["lr"]
-            self.tb.log_scalar("LR", current_lr, epoch)
 
         # ── MLflow ─────────────────────────────────────────────────────
         # ── MLflow logging ──
@@ -349,6 +436,7 @@ class Trainer:
             if val_metrics:
                 # Main metrics
                 log_dict.update({
+                    
                     "val_loss": val_metrics["val_loss"],
                     "mIoU": val_metrics["mIoU"],
                     "fw_iou": val_metrics["fw_iou"],
@@ -357,10 +445,17 @@ class Trainer:
                     "precision": val_metrics["mean_precision"],
                     "recall": val_metrics["mean_recall"],
                     "f1": val_metrics["mean_f1"],
-                    "boundary_iou": val_metrics["boundary_iou"],
-                    "boundary_fscore": val_metrics["boundary_fscore"],
                 })
-                
+                if val_metrics.get("boundary_iou") is not None:
+                    log_dict["boundary_iou"] = val_metrics["boundary_iou"]
+                if val_metrics.get("boundary_fscore") is not None:
+                    log_dict["boundary_fscore"] = val_metrics["boundary_fscore"]
+
+                # Log LR per group
+                for i, g in enumerate(self.optimizer.param_groups):
+                    name = g.get("name", f"group_{i}")
+                    log_dict[f"lr_{name}"] = g["lr"]
+
                 # Per-class metrics: LOG ONLY EVERY 5 EPOCHS
                 if epoch % 5 == 0:
                     for cls_idx, cls_name in enumerate(CITYSCAPES_CLASSES):
@@ -388,19 +483,30 @@ class Trainer:
         cfg = self.cfg
 
         if self.mlf:
-            self.mlf.log_params({
-                "backbone"       : cfg.model.backbone,
-                "output_stride"  : cfg.model.output_stride,
-                "loss"           : cfg.loss.type,
-                "optimizer"      : cfg.training.optimizer,
-                "lr"             : cfg.training.lr,
-                "epochs"         : cfg.training.epochs,
-                "batch_size"     : cfg.data.batch_size,
-                "accum_steps"    : cfg.training.accumulation_steps,
-                "amp"            : cfg.training.amp,
-                "aux_loss"       : cfg.training.aux_loss,
-                "image_size"     : str(cfg.data.image_size),
-            })
+            # Log both group LRs if multi-group optimizer
+            lr_params = {}
+            for i, g in enumerate(self.optimizer.param_groups):
+                name = g.get("name", f"group_{i}")
+                lr_params[f"lr_{name}"] = g["lr"]
+
+
+            params_to_log = {
+                "backbone"      : cfg.model.backbone,
+                "output_stride" : cfg.model.output_stride,
+                "loss"          : cfg.loss.type,
+                "optimizer"     : cfg.training.optimizer,
+                "epochs"        : cfg.training.epochs,
+                "batch_size"    : cfg.data.batch_size,
+                "accum_steps"   : cfg.training.accumulation_steps,
+                "amp"           : cfg.training.amp,
+                "aux_loss"      : cfg.training.aux_loss,
+                "image_size"    : str(cfg.data.image_size),
+                "lr_scheduler"  : cfg.training.lr_scheduler,
+                "warmup_epochs" : getattr(cfg.training, "warmup_epochs", 0),
+                "weight_decay"  : cfg.training.weight_decay,
+            }
+            params_to_log.update(lr_params)   # ← NOW actually included
+            self.mlf.log_params(params_to_log)
 
         self.logger.info(
             f"Starting training: exp={cfg.experiment_id}  "
@@ -416,18 +522,19 @@ class Trainer:
             train_loss, train_time = self._train_epoch(epoch)
             torch.cuda.empty_cache()    # free up memory after train epoch before validation
 
+            self.history["train"]["epoch"].append(epoch)
+            self.history["train"]["loss"].append(train_loss)
+
             # ── Validate ───────────────────────────────────────────────
             val_metrics = {}
             if epoch % eval_interval == 0:
                 val_metrics                = self._val_epoch(epoch)
                 torch.cuda.empty_cache()    # free up memory after val epoch before logging/checkpointing
+                
                 val_metrics["train_loss"] = train_loss
-
                 val_metrics["train_time"] = train_time
                 
                 # ── Save history ───────────────────────────────────
-                self.history["train"]["epoch"].append(epoch)
-                self.history["train"]["loss"].append(train_loss)
 
                 self.history["val"]["epoch"].append(epoch)
                 self.history["val"]["loss"].append(
@@ -464,15 +571,8 @@ class Trainer:
                 self._log_scalars(val_metrics, train_loss, epoch)
 
 
-            else:
-                self.logger.info(f"Epoch {epoch:03d} | train_loss={train_loss:.4f}")
-                if self.tb:
-                    self.tb.log_scalar("Loss/train", train_loss, epoch)
-                if self.mlf:
-                    self.mlf.log_metrics({"train_loss": train_loss}, step=epoch)
-
-            # ── Checkpoint ─────────────────────────────────────────────
-            if val_metrics:
+                # ── Checkpoint ─────────────────────────────────────────────
+        
                 """
                 metrics_to_save = {
                     k: v for k, v in val_metrics.items()
@@ -499,10 +599,18 @@ class Trainer:
                     checkpoint_dir = cfg.checkpoint.dir,
                     top_k          = cfg.checkpoint.save_top_k,
                 )
-                                
-        # ── Early stopping ─────────────────────────────────────────
-            if val_metrics:
+
+                # ── Scheduler step — BEFORE early stopping ────────────────
+                # Must step before break so final epoch always steps scheduler.
+                # Plateau uses mIoU; LambdaLR returns early (already batch-stepped);
+                # all others just call .step()
+                # Step scheduler with metric (only plateau uses it; others ignore it)
+                self._scheduler_step(val_metric=val_metrics.get("mIoU"))  # ← INSIDE val block
+        
+                # ── Early Stopping ─────────────────────────────────────────────
+                    
                 current_miou = val_metrics["mIoU"]
+
                 stop = self.early_stopping.step(current_miou)
 
                 self.logger.info(
@@ -519,7 +627,29 @@ class Trainer:
                     )
                     break   # exits the epoch loop cleanly
 
-            # ── Cleanup ────────────────────────────────────────────────────
+                
+            else:
+                # Step epoch-level schedulers even on non-validation epochs
+                self._scheduler_step(val_metric=None)
+
+                self.logger.info(
+                    f"Epoch {epoch:03d} | train_loss={train_loss:.4f}"
+                )
+                if self.tb:
+                    self.tb.log_scalar("Loss/train", train_loss, epoch)
+                    for i, g in enumerate(self.optimizer.param_groups):
+                        name = g.get("name", f"group_{i}")
+                        self.tb.log_scalar(f"LR/{name}", g["lr"], epoch)
+                if self.mlf:
+                    self.mlf.log_metrics({"train_loss": train_loss}, step=epoch)
+
+
+
+        # ── Final state ────────────────────────────────────────────────
+        self.model.eval()      # consistent final state regardless of how loop ended
+        self.loss_fn.eval()
+
+        # ── Cleanup ────────────────────────────────────────────────────
             
         if self.tb:
             self.tb.close()

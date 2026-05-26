@@ -100,19 +100,29 @@ class WeightedCrossEntropyLoss(nn.Module):
     Use when some classes are rare (e.g. bicycle, motorcycle in Cityscapes).
 
     Args:
-        class_weights: (num_classes,) tensor — higher = more attention to that class
-                       Compute with: 1 / class_pixel_frequency
+        Weights come from config as a Python list — this class converts them to
+        a tensor and registers as a buffer (auto-moves to GPU with model.to(device)).
+
+        class_weights: list, tuple, or FloatTensor of shape (num_classes,)
+                       Higher = more penalty for misclassifying that class.
+                       Compute with compute_class_weights.py (median-freq method).
+
         aux_weight   : weight for aux branch
         ignore_index : pixel to ignore
     
     Example:
-        weights = torch.tensor([1.0, 2.5, 1.0, ...])  # 19 values for Cityscapes
+        
         loss_fn = WeightedCrossEntropyLoss(class_weights=weights)
     """
     def __init__(self, class_weights=None, aux_weight=0.4, ignore_index=255):
         super().__init__()
         self.aux_weight   = aux_weight
         self.ignore_index = ignore_index
+
+        # Accept list/tuple from yaml config and convert to tensor
+        if class_weights is not None and not isinstance(class_weights, torch.Tensor):
+            class_weights = torch.tensor(class_weights, dtype=torch.float32)
+
         # register_buffer: moves weights to GPU automatically with model.to(device)
         self.register_buffer("class_weights", class_weights)
 
@@ -406,7 +416,7 @@ class WeightedCEDiceLoss(nn.Module):
         - segmentation overlap quality
 
     Args:
-        class_weights : tensor of class weights
+        class_weights : list, tuple, or tensor of class weights
         dice_weight   : Dice contribution strength
         aux_weight    : aux branch weight
         ignore_index  : ignored label
@@ -589,8 +599,17 @@ def build_loss(loss_type: str, ignore_index: int = 255, **kwargs) -> nn.Module:
             dice_weight: 0.5
             aux_weight: 0.4
 
+        loss:
+          type: wce_dice
+          class_weights: [0.5, 1.2, 0.8, ...]   # 19 values
+          kwargs:
+            dice_weight: 0.5
+            aux_weight: 0.4
+
     Usage in code:
         loss_fn = build_loss("ce_dice", dice_weight=0.5)
+        loss_fn = build_loss("wce_dice", class_weights=[...], dice_weight=0.5)
+        loss_fn = build_loss("weighted_ce", class_weights=[...])
         loss_fn = build_loss("focal", gamma=1.5)
         loss_fn = build_loss("ohem_dice", thresh=0.6, dice_weight=0.3)
         loss_fn = build_loss("lovasz_ce", ce_weight=0.5)
