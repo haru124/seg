@@ -14,17 +14,20 @@ data:
   image_size: [256, 512]
   batch_size: 2
   num_workers: 0
-  max_samples: null
+  max_train_samples: 100 #10            # for debugging; null = use full dataset
+  max_val_samples: 30 #4
+  max_test_samples: 20 #2
 
 training:
-  epochs: 1
+  epochs: 4
   lr: 0.01
-  lr_scheduler: "poly"
+  lr_scheduler: "cosine_warmup"
+  warmup: 2
   momentum: 0.9
   weight_decay: 1.0e-4
-  optimizer: "sgd"
+  optimizer: "adamw"
   aux_loss: true
-  aux_weight: 0.4
+  aux_weight: 0.1
   grad_clip: null
   amp: false
   accumulation_steps: 1

@@ -51,7 +51,7 @@ class TrainingConfig:
     epochs: int
     lr: float
     lr_scheduler: str          # "poly" | "cosine" | "step"
-    warmup_epochs: int   
+    warmup: int   
     momentum: float            # for SGD
     weight_decay: float
     optimizer: str             # "sgd" | "adamw" | "adam"

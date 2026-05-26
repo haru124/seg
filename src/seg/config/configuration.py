@@ -121,7 +121,7 @@ def _build_config(cfg: dict) -> ExperimentConfig:
         epochs            = t["epochs"],
         lr                = t["lr"],
         lr_scheduler      = t["lr_scheduler"],
-        warmup_epochs     = t.get("warmup_epochs", 0), 
+        warmup     = t.get("warmup", 0), 
         momentum          = t.get("momentum", 0.9),
         weight_decay      = t.get("weight_decay", 1e-4),
         optimizer         = t.get("optimizer", "sgd"),

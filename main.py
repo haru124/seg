@@ -151,7 +151,7 @@ def build_scheduler(optimizer, cfg, num_iters_per_epoch: int):
     )
 
     sched_name = cfg.training.lr_scheduler.lower()
-    warmup_epochs = getattr(cfg.training, "warmup_epochs", 0)
+    warmup_epochs = getattr(cfg.training, "warmup", 0)
     total_epochs  = cfg.training.epochs
 
     if sched_name == "poly":

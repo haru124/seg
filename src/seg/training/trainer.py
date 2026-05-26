@@ -403,7 +403,7 @@ class Trainer:
                 self.tb.log_scalar("Metrics/mIoU",         val_metrics["mIoU"],                 epoch)
                 self.tb.log_scalar("Metrics/fw_iou",       val_metrics["fw_iou"],               epoch)
                 self.tb.log_scalar("Metrics/pixel_acc",    val_metrics["mean_pixel_acc"],        epoch)
-                self.tb.log_scalar("Metrics/class_acc",    val_metrics["mean_class_acc"],        epoch)
+                #self.tb.log_scalar("Metrics/class_acc",    val_metrics["mean_class_acc"],        epoch)
                 self.tb.log_scalar("Metrics/precision",    val_metrics["mean_precision"],        epoch)
                 self.tb.log_scalar("Metrics/recall",       val_metrics["mean_recall"],           epoch)
                 self.tb.log_scalar("Metrics/f1",           val_metrics["mean_f1"],               epoch)
@@ -441,7 +441,7 @@ class Trainer:
                     "mIoU": val_metrics["mIoU"],
                     "fw_iou": val_metrics["fw_iou"],
                     "pixel_acc": val_metrics["mean_pixel_acc"],
-                    "class_acc": val_metrics["mean_class_acc"],
+                    #"class_acc": val_metrics["mean_class_acc"],
                     "precision": val_metrics["mean_precision"],
                     "recall": val_metrics["mean_recall"],
                     "f1": val_metrics["mean_f1"],
